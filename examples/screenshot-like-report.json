@@ -1,0 +1,486 @@
+{
+  "schemaVersion": 1,
+  "analyzerVersion": "0.3.0",
+  "generatedAt": "2026-08-15T19:19:32.794Z",
+  "sessionId": "screenshot-like-example",
+  "source": {
+    "kind": "client-trajectory-projection",
+    "rawEvents": null
+  },
+  "status": {
+    "code": "blocked",
+    "label": "受阻",
+    "tone": "danger"
+  },
+  "summary": "本次运行受阻：10 次工具调用中 9 次失败；主要问题是把远程 URL 交给了本地文件工具，以及出现 6 步无进展重试循环。",
+  "strategy": "定位输入与读取资料 → 生成或修改产物 → 定位输入与读取资料 → 定位输入与读取资料",
+  "rootCause": "没有区分本地资源定位与远程资源获取两种工具语义。",
+  "metrics": {
+    "events": 12,
+    "turns": 2,
+    "requests": 0,
+    "toolCalls": 10,
+    "failedTools": 9,
+    "successfulTools": 1,
+    "failureRate": 0.9,
+    "runningTools": 0,
+    "usage": {
+      "input": 0,
+      "output": 0,
+      "reasoning": 0,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "startedAt": 1700000001000,
+    "endedAt": 1700000022000,
+    "durationMs": 21000,
+    "historyComplete": true
+  },
+  "phases": [
+    {
+      "id": "phase-1",
+      "title": "定位输入与读取资料",
+      "category": "inspect",
+      "seqStart": 3,
+      "seqEnd": 5,
+      "turn": 1,
+      "callCount": 2,
+      "failureCount": 2,
+      "status": "failed",
+      "summary": "调用 str_replace_editor 共 2 次，涉及 2 个路径，其中 2 次失败",
+      "tools": [
+        "str_replace_editor"
+      ]
+    },
+    {
+      "id": "phase-2",
+      "title": "生成或修改产物",
+      "category": "mutate",
+      "seqStart": 7,
+      "seqEnd": 7,
+      "turn": 1,
+      "callCount": 1,
+      "failureCount": 0,
+      "status": "completed",
+      "summary": "调用 str_replace_editor 共 1 次，涉及 1 个路径，未记录失败",
+      "tools": [
+        "str_replace_editor"
+      ]
+    },
+    {
+      "id": "phase-3",
+      "title": "定位输入与读取资料",
+      "category": "inspect",
+      "seqStart": 9,
+      "seqEnd": 15,
+      "turn": 1,
+      "callCount": 4,
+      "failureCount": 4,
+      "status": "failed",
+      "summary": "调用 str_replace_editor 共 4 次，涉及 4 个路径，其中 4 次失败",
+      "tools": [
+        "str_replace_editor"
+      ]
+    },
+    {
+      "id": "phase-4",
+      "title": "定位输入与读取资料",
+      "category": "inspect",
+      "seqStart": 17,
+      "seqEnd": 21,
+      "turn": 2,
+      "callCount": 3,
+      "failureCount": 3,
+      "status": "failed",
+      "summary": "调用 str_replace_editor 共 3 次，涉及 2 个路径，其中 3 次失败",
+      "tools": [
+        "str_replace_editor"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "url-to-local:call-19:0",
+      "category": "tool_semantics",
+      "severity": "high",
+      "title": "把远程 URL 交给了本地文件工具",
+      "summary": "str_replace_editor 收到了 https://raw.githubusercontent.com/example/repo/main/README.md；这类工具只能读取本地文件系统路径。",
+      "rootCause": "没有区分本地资源定位与远程资源获取两种工具语义。",
+      "recommendation": "URL 应交给 web_fetch、GitHub、HTTP 或下载工具；若当前组合没有网络获取能力，应直接报告并请求用户提供本地副本。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 19,
+          "turn": 2,
+          "step": 10,
+          "toolName": "str_replace_editor",
+          "callId": "call-19",
+          "excerpt": "str_replace_editor(https://raw.githubusercontent.com/example/repo/main/README.md) → FS_NOT_FOUND"
+        }
+      ]
+    },
+    {
+      "id": "no-progress-loop",
+      "category": "loop",
+      "severity": "high",
+      "title": "出现 6 步无进展重试循环",
+      "summary": "str_replace_editor 在没有成功事件打断的情况下连续返回 FS_NOT_FOUND。",
+      "rootCause": "Agent 没有把重复错误视为停止信号，也没有设置重试预算或策略切换门槛。",
+      "recommendation": "为同工具同错误设置最多两次尝试；超过预算后必须总结证据、改用另一类工具或请求用户介入。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 9,
+          "turn": 1,
+          "step": 5,
+          "toolName": "str_replace_editor",
+          "callId": "call-9",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 11,
+          "turn": 1,
+          "step": 6,
+          "toolName": "str_replace_editor",
+          "callId": "call-11",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 13,
+          "turn": 1,
+          "step": 7,
+          "toolName": "str_replace_editor",
+          "callId": "call-13",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 15,
+          "turn": 1,
+          "step": 8,
+          "toolName": "str_replace_editor",
+          "callId": "call-15",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 17,
+          "turn": 2,
+          "step": 9,
+          "toolName": "str_replace_editor",
+          "callId": "call-17",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 19,
+          "turn": 2,
+          "step": 10,
+          "toolName": "str_replace_editor",
+          "callId": "call-19",
+          "excerpt": "FS_NOT_FOUND"
+        }
+      ]
+    },
+    {
+      "id": "high-failure-ratio",
+      "category": "efficiency",
+      "severity": "high",
+      "title": "工具失败率达到 90%",
+      "summary": "10 次已结束工具调用中有 9 次失败，主要执行预算被消耗在未产生进展的尝试上。",
+      "rootCause": "缺少失败预算、能力预检和阶段性停止条件。",
+      "recommendation": "每个阶段维护“新增证据”指标；连续两次没有新增证据时停止执行并重新规划。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 3,
+          "turn": 1,
+          "step": 2,
+          "toolName": "str_replace_editor",
+          "callId": "call-3",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 5,
+          "turn": 1,
+          "step": 3,
+          "toolName": "str_replace_editor",
+          "callId": "call-5",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 9,
+          "turn": 1,
+          "step": 5,
+          "toolName": "str_replace_editor",
+          "callId": "call-9",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 11,
+          "turn": 1,
+          "step": 6,
+          "toolName": "str_replace_editor",
+          "callId": "call-11",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 13,
+          "turn": 1,
+          "step": 7,
+          "toolName": "str_replace_editor",
+          "callId": "call-13",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 15,
+          "turn": 1,
+          "step": 8,
+          "toolName": "str_replace_editor",
+          "callId": "call-15",
+          "excerpt": "FS_NOT_FOUND"
+        }
+      ]
+    },
+    {
+      "id": "repeated-failure:str_replace_editor:FS_NOT_FOUND",
+      "category": "repeated_failure",
+      "severity": "high",
+      "title": "同类错误重复出现 8 次",
+      "summary": "str_replace_editor 连续或多次返回 FS_NOT_FOUND，但策略没有获得足以改变结果的新证据。",
+      "rootCause": "失败后仍沿用同一种工具与同一类参数，只做表面替换，没有先确认能力边界或输入来源。",
+      "recommendation": "同一错误出现两次后暂停重试：先读取可见工作区、枚举可用工具，或向用户请求唯一缺失的输入。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 3,
+          "turn": 1,
+          "step": 2,
+          "toolName": "str_replace_editor",
+          "callId": "call-3",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 5,
+          "turn": 1,
+          "step": 3,
+          "toolName": "str_replace_editor",
+          "callId": "call-5",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 9,
+          "turn": 1,
+          "step": 5,
+          "toolName": "str_replace_editor",
+          "callId": "call-9",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 11,
+          "turn": 1,
+          "step": 6,
+          "toolName": "str_replace_editor",
+          "callId": "call-11",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 13,
+          "turn": 1,
+          "step": 7,
+          "toolName": "str_replace_editor",
+          "callId": "call-13",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 15,
+          "turn": 1,
+          "step": 8,
+          "toolName": "str_replace_editor",
+          "callId": "call-15",
+          "excerpt": "FS_NOT_FOUND"
+        }
+      ]
+    },
+    {
+      "id": "blind-path-guessing",
+      "category": "blind_path",
+      "severity": "high",
+      "title": "无证据猜测了 7 个本地路径",
+      "summary": "Agent 在没有目录枚举结果的情况下轮流尝试 D:\\work\\weread-exporter、D:\\tmp\\weread-exporter、D:\\Downloads、D:\\download、D:\\Users 等路径。",
+      "rootCause": "把路径猜测当作仓库发现机制，而不是从已选 workspace、当前目录或用户提供的位置建立证据链。",
+      "recommendation": "先读取会话 workspace 和可见目录；若工具无法枚举目录，应立即说明阻塞条件，不继续扩展猜测空间。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 3,
+          "turn": 1,
+          "step": 2,
+          "toolName": "str_replace_editor",
+          "callId": "call-3",
+          "excerpt": "D:\\work\\weread-exporter → FS_NOT_FOUND"
+        },
+        {
+          "seq": 5,
+          "turn": 1,
+          "step": 3,
+          "toolName": "str_replace_editor",
+          "callId": "call-5",
+          "excerpt": "D:\\tmp\\weread-exporter → FS_NOT_FOUND"
+        },
+        {
+          "seq": 9,
+          "turn": 1,
+          "step": 5,
+          "toolName": "str_replace_editor",
+          "callId": "call-9",
+          "excerpt": "D:\\Downloads → FS_NOT_FOUND"
+        },
+        {
+          "seq": 11,
+          "turn": 1,
+          "step": 6,
+          "toolName": "str_replace_editor",
+          "callId": "call-11",
+          "excerpt": "D:\\download → FS_NOT_FOUND"
+        },
+        {
+          "seq": 13,
+          "turn": 1,
+          "step": 7,
+          "toolName": "str_replace_editor",
+          "callId": "call-13",
+          "excerpt": "D:\\Users → FS_NOT_FOUND"
+        },
+        {
+          "seq": 15,
+          "turn": 1,
+          "step": 8,
+          "toolName": "str_replace_editor",
+          "callId": "call-15",
+          "excerpt": "D:\\src → FS_NOT_FOUND"
+        },
+        {
+          "seq": 17,
+          "turn": 2,
+          "step": 9,
+          "toolName": "str_replace_editor",
+          "callId": "call-17",
+          "excerpt": "D:\\git → FS_NOT_FOUND"
+        }
+      ]
+    },
+    {
+      "id": "platform-capability-mismatch",
+      "category": "capability",
+      "severity": "high",
+      "title": "运行能力盘点发生得过晚",
+      "summary": "轨迹在第 10 次工具尝试附近才确认终端、平台或外部访问能力不足。",
+      "rootCause": "任务开始前没有建立操作系统、工作区、终端、Git、网络和文件工具的能力清单。",
+      "recommendation": "把环境预检放在第一次实质操作之前；确认能力缺失后立即切换到可行路径，不再调用必然失败的工具。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 21,
+          "turn": 2,
+          "step": 11,
+          "toolName": "str_replace_editor",
+          "callId": "call-21",
+          "excerpt": "terminal inspection is unsupported on platform win32"
+        }
+      ]
+    },
+    {
+      "id": "premature-side-effect",
+      "category": "ordering",
+      "severity": "high",
+      "title": "在确认核心输入可访问之前产生了副作用",
+      "summary": "str_replace_editor 已执行写入或创建，但此后仍反复发现目标资料不可访问。",
+      "rootCause": "执行顺序把“创建交付物”放在“确认输入与能力”之前，容易制造看似有产出的占位文件。",
+      "recommendation": "先完成输入可达性 Gate；只有读取到目标资料并建立最小证据后，才允许创建正式报告或修改项目。",
+      "confidence": "high",
+      "evidence": [
+        {
+          "seq": 7,
+          "turn": 1,
+          "step": 4,
+          "toolName": "str_replace_editor",
+          "callId": "call-7",
+          "excerpt": "New file created successfully."
+        },
+        {
+          "seq": 9,
+          "turn": 1,
+          "step": 5,
+          "toolName": "str_replace_editor",
+          "callId": "call-9",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 11,
+          "turn": 1,
+          "step": 6,
+          "toolName": "str_replace_editor",
+          "callId": "call-11",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 13,
+          "turn": 1,
+          "step": 7,
+          "toolName": "str_replace_editor",
+          "callId": "call-13",
+          "excerpt": "FS_NOT_FOUND"
+        },
+        {
+          "seq": 15,
+          "turn": 1,
+          "step": 8,
+          "toolName": "str_replace_editor",
+          "callId": "call-15",
+          "excerpt": "FS_NOT_FOUND"
+        }
+      ]
+    }
+  ],
+  "lessons": [
+    {
+      "id": "resource-tool-match",
+      "title": "资源与工具匹配规则",
+      "text": "URL 交给网络或仓库工具，本地文件工具只处理已经存在的文件系统路径。",
+      "sourceFindingId": "url-to-local:call-19:0"
+    },
+    {
+      "id": "stop-after-repeat",
+      "title": "重复错误停止规则",
+      "text": "同一工具出现两次同类错误后，必须引入新证据或更换策略，不得只替换参数继续重试。",
+      "sourceFindingId": "no-progress-loop"
+    },
+    {
+      "id": "progress-budget",
+      "title": "进展预算规则",
+      "text": "连续两次工具调用没有新增证据时暂停执行，先总结阻塞条件并重新规划。",
+      "sourceFindingId": "high-failure-ratio"
+    },
+    {
+      "id": "no-path-guessing",
+      "title": "路径发现规则",
+      "text": "处理本地项目之前先读取已选工作区和可见目录；禁止凭空枚举磁盘路径。",
+      "sourceFindingId": "blind-path-guessing"
+    },
+    {
+      "id": "capability-preflight",
+      "title": "环境预检规则",
+      "text": "第一次实质操作前确认操作系统、工作区、终端、Git、网络与文件工具能力。",
+      "sourceFindingId": "platform-capability-mismatch"
+    },
+    {
+      "id": "input-before-output",
+      "title": "输入 Gate 规则",
+      "text": "核心输入尚未可访问时，不创建正式交付文件，也不宣称已开始实质审计。",
+      "sourceFindingId": "premature-side-effect"
+    }
+  ],
+  "finalAnswer": "当前环境无法访问 GitHub，也没有可用 Bash。请先克隆仓库或上传文件。",
+  "userGoal": "审计 weread-exporter 项目",
+  "limitations": [
+    "本报告使用确定性规则生成，未调用模型，也不会写回原会话。"
+  ]
+}

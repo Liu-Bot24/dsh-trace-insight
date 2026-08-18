@@ -1,0 +1,46 @@
+/** Host entry for continuous Trace Insight analysis and its loopback UI RPC. */
+import { TraceInsightService } from './src/analysis-service.mjs'
+import { normalizeAnalysisSettings } from './src/analysis-policy.mjs'
+import { FileHistoryStore } from './src/history-store.mjs'
+import { createTraceInsightRpcHandler } from './src/host-rpc.mjs'
+
+export const name = 'trace-insight'
+export const inject = ['connection', 'sessionQuery', 'llm']
+
+function initialSettings(config = {}) {
+  const provider = typeof config.defaultProvider === 'string' ? config.defaultProvider.trim() : ''
+  const model = typeof config.defaultModel === 'string' ? config.defaultModel.trim() : ''
+  return normalizeAnalysisSettings({
+    defaultRoute: provider && model ? { provider, model } : null,
+    auto: {
+      ...(typeof config.autoEnabled === 'boolean' ? { enabled: config.autoEnabled } : {}),
+      ...(Number.isSafeInteger(config.autoEveryTurns) ? { everyTurns: config.autoEveryTurns } : {}),
+      ...(Number.isSafeInteger(config.autoMaxPendingEvents) ? { maxPendingEvents: config.autoMaxPendingEvents } : {}),
+      ...(Number.isSafeInteger(config.autoMaxInputChars) ? { maxInputChars: config.autoMaxInputChars } : {}),
+      ...(Number.isSafeInteger(config.autoQuietPeriodMs) ? { quietPeriodMs: config.autoQuietPeriodMs } : {}),
+    },
+  })
+}
+export function apply(ctx, config = {}) {
+  const store = new FileHistoryStore({
+    ...(typeof config.dataDir === 'string' && config.dataDir ? { rootDir: config.dataDir } : {}),
+    initialSettings: initialSettings(config),
+  })
+  const service = new TraceInsightService({
+    sessionQuery: ctx.sessionQuery,
+    llm: ctx.llm,
+    store,
+    logger: ctx.logger ?? console,
+  })
+  service.runInBackground(null, 'startup-recovery', service.start())
+  const disposeRpc = ctx.connection.rpc.handle(
+    '/trace-insight',
+    createTraceInsightRpcHandler({ sessionQuery: ctx.sessionQuery, service }),
+    { authority: 'loopback' },
+  )
+  ctx.on('session/event', (session, event) => service.observeLiveEvent(session, event))
+  ctx.effect(() => async () => {
+    service.dispose()
+    await disposeRpc()
+  }, 'trace-insight: host service')
+}

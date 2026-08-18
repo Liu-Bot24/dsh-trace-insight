@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DSH Trace Insight 0.3.0 Preview</title>
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; }
+    body { margin: 0; background: #eef1f6; color: #101828; }
+    main { width: min(1480px, calc(100% - 32px)); margin: 28px auto 48px; }
+    h1 { margin: 0 0 8px; font-size: clamp(24px, 4vw, 40px); }
+    p { margin: 0 0 20px; color: #475467; line-height: 1.7; }
+    img { display: block; width: 100%; height: auto; border: 1px solid #d0d5dd; border-radius: 18px; box-shadow: 0 24px 64px rgb(16 24 40 / 14%); }
+    code { font-family: "Cascadia Code", ui-monospace, monospace; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #10131a; color: #f2f4f7; }
+      p { color: #98a2b3; }
+      img { border-color: #344054; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>DSH Trace Insight 0.3.0</h1>
+    <p>真实 DeepSeek Harness <code>0.1.0-rc.6</code> 隔离浏览器验收截图：连续双层覆盖、Turn/Seq 时间线、默认模型与分段换模运维。截图中的模型为本地 fixture，只验证集成行为，不代表真实模型质量。</p>
+    <img src="./preview.png" alt="DSH Trace Insight 0.3.0 时间线界面">
+  </main>
+</body>
+</html>

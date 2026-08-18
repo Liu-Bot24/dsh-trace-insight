@@ -1,0 +1,58 @@
+{
+  "name": "dsh-plugin-trace-insight",
+  "version": "1.0.0",
+  "description": "A continuous, model-assisted semantic debugger for DeepSeek Harness trajectories.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "src",
+    "patches",
+    "scripts/build.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-trajectory",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ],
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "test": "node --test",
+    "prepack": "npm run build && npm test"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "ai-agents",
+    "trajectory",
+    "observability"
+  ],
+  "license": "MIT",
+  "dshCompatibility": {
+    "version": "0.1.0-rc.6",
+    "surface": "web"
+  }
+}

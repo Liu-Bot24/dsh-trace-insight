@@ -1,0 +1,13 @@
+DEVELOPMENT_LOG.md
+CONTEXT.md
+node_modules/
+.npm-cache/
+.smoke-home/
+*.tgz
+*.zip
+coverage/
+.playwright-cli/
+output/
+__pycache__/
+*.py[cod]
+npm-debug.log*

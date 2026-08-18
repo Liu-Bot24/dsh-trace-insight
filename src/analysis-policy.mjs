@@ -1,0 +1,514 @@
+import { createHash } from 'node:crypto'
+
+export const ANALYSIS_SETTINGS_VERSION = 1
+
+export const DEFAULT_ANALYSIS_SETTINGS = Object.freeze({
+  schemaVersion: ANALYSIS_SETTINGS_VERSION,
+  defaultRoute: null,
+  auto: Object.freeze({
+    enabled: true,
+    everyTurns: 4,
+    maxPendingEvents: 160,
+    maxInputChars: 22_000,
+    quietPeriodMs: 90_000,
+    // Provisional semantic policy for open turns. Thresholds are based on
+    // meaningful events and compressed evidence characters, never raw Seq
+    // counts (assistant/chunk inflates Seq without adding evidence).
+    provisional: Object.freeze({
+      enabled: true,
+      failureThreshold: 3, // same-kind tool failures before a stage analysis
+      noProgressSteps: 4, // consecutive closed steps without real progress
+      meaningfulEvents: 60, // new meaningful events since the last stage run
+      compressedChars: 12_000, // new compressed input characters
+      maxAgeMs: 5 * 60_000, // time since the last stage run with new content
+      quietMs: 60_000, // open-turn quiet with unanalyzed stable content
+      cooldownMs: 150_000, // minimum spacing between paid model calls
+      maxCallsPerTurn: 8, // hard per-open-turn call quota
+    }),
+  }),
+  model: Object.freeze({
+    maxOutputTokens: 1_800,
+    timeoutMs: 120_000,
+  }),
+  resourcePolicy: Object.freeze({
+    // These are deterministic resource guards, not price estimates. A manual
+    // job that exceeds either hard ceiling requires an explicit audited
+    // override at start time.
+    maxCallsPerJob: 24,
+    maxInputCharsPerJob: 400_000,
+    warnCallsPerJob: 8,
+    warnInputCharsPerJob: 120_000,
+  }),
+})
+
+function asArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function finiteInteger(value, fallback, min, max) {
+  const number = Number(value)
+  if (!Number.isSafeInteger(number)) return fallback
+  return Math.min(max, Math.max(min, number))
+}
+
+function route(value) {
+  if (value === null || value === undefined) return null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const provider = typeof value.provider === 'string' ? value.provider.trim() : ''
+  const model = typeof value.model === 'string' ? value.model.trim() : ''
+  if (!provider || !model || provider.length > 256 || model.length > 256) return null
+  const reasoningEffort = typeof value.reasoningEffort === 'string' ? value.reasoningEffort.trim() : ''
+  return {
+    provider,
+    model,
+    ...(reasoningEffort ? { reasoningEffort: reasoningEffort.slice(0, 128) } : {}),
+  }
+}
+
+/** Merge a persisted or RPC settings value onto the bounded defaults. */
+export function normalizeAnalysisSettings(value = {}, base = DEFAULT_ANALYSIS_SETTINGS) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const auto = source.auto && typeof source.auto === 'object' && !Array.isArray(source.auto) ? source.auto : {}
+  const provisional = auto.provisional && typeof auto.provisional === 'object' && !Array.isArray(auto.provisional)
+    ? auto.provisional
+    : {}
+  const baseProvisional = base.auto.provisional ?? DEFAULT_ANALYSIS_SETTINGS.auto.provisional
+  const model = source.model && typeof source.model === 'object' && !Array.isArray(source.model) ? source.model : {}
+  const resourcePolicy = source.resourcePolicy && typeof source.resourcePolicy === 'object' && !Array.isArray(source.resourcePolicy)
+    ? source.resourcePolicy
+    : {}
+  const baseResourcePolicy = base.resourcePolicy ?? DEFAULT_ANALYSIS_SETTINGS.resourcePolicy
+  const maxCallsPerJob = finiteInteger(resourcePolicy.maxCallsPerJob, baseResourcePolicy.maxCallsPerJob, 1, 10_000)
+  const maxInputCharsPerJob = finiteInteger(resourcePolicy.maxInputCharsPerJob, baseResourcePolicy.maxInputCharsPerJob, 4_000, 100_000_000)
+  return {
+    schemaVersion: ANALYSIS_SETTINGS_VERSION,
+    defaultRoute: Object.prototype.hasOwnProperty.call(source, 'defaultRoute')
+      ? route(source.defaultRoute)
+      : route(base.defaultRoute),
+    auto: {
+      enabled: typeof auto.enabled === 'boolean' ? auto.enabled : base.auto.enabled,
+      everyTurns: finiteInteger(auto.everyTurns, base.auto.everyTurns, 1, 100),
+      maxPendingEvents: finiteInteger(auto.maxPendingEvents, base.auto.maxPendingEvents, 20, 10_000),
+      maxInputChars: finiteInteger(auto.maxInputChars, base.auto.maxInputChars, 4_000, 120_000),
+      quietPeriodMs: finiteInteger(auto.quietPeriodMs, base.auto.quietPeriodMs, 5_000, 3_600_000),
+      provisional: {
+        enabled: typeof provisional.enabled === 'boolean' ? provisional.enabled : baseProvisional.enabled,
+        failureThreshold: finiteInteger(provisional.failureThreshold, baseProvisional.failureThreshold, 1, 20),
+        noProgressSteps: finiteInteger(provisional.noProgressSteps, baseProvisional.noProgressSteps, 1, 50),
+        meaningfulEvents: finiteInteger(provisional.meaningfulEvents, baseProvisional.meaningfulEvents, 10, 10_000),
+        compressedChars: finiteInteger(provisional.compressedChars, baseProvisional.compressedChars, 2_000, 200_000),
+        maxAgeMs: finiteInteger(provisional.maxAgeMs, baseProvisional.maxAgeMs, 60_000, 3_600_000),
+        quietMs: finiteInteger(provisional.quietMs, baseProvisional.quietMs, 15_000, 1_800_000),
+        cooldownMs: finiteInteger(provisional.cooldownMs, baseProvisional.cooldownMs, 30_000, 1_800_000),
+        maxCallsPerTurn: finiteInteger(provisional.maxCallsPerTurn, baseProvisional.maxCallsPerTurn, 1, 100),
+      },
+    },
+    model: {
+      maxOutputTokens: finiteInteger(model.maxOutputTokens, base.model.maxOutputTokens, 256, 16_384),
+      timeoutMs: finiteInteger(model.timeoutMs, base.model.timeoutMs, 10_000, 600_000),
+    },
+    resourcePolicy: {
+      maxCallsPerJob,
+      maxInputCharsPerJob,
+      warnCallsPerJob: finiteInteger(resourcePolicy.warnCallsPerJob, baseResourcePolicy.warnCallsPerJob, 1, maxCallsPerJob),
+      warnInputCharsPerJob: finiteInteger(resourcePolicy.warnInputCharsPerJob, baseResourcePolicy.warnInputCharsPerJob, 1_000, maxInputCharsPerJob),
+    },
+  }
+}
+
+export function redactTraceText(value) {
+  return String(value ?? '')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[REDACTED]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, '[REDACTED_KEY]')
+    .replace(/((?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|secret|password|cookie)\s*["']?\s*[:=]\s*["']?)([^\s,"'\]}]{6,})/gi, '$1[REDACTED]')
+}
+
+function compact(value, limit = 1_200) {
+  let text
+  if (typeof value === 'string') text = value
+  else {
+    try {
+      text = JSON.stringify(value)
+    } catch {
+      text = String(value ?? '')
+    }
+  }
+  text = redactTraceText(text).replace(/\s+/g, ' ').trim()
+  return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1))}…`
+}
+
+function blockText(content, limit = 1_600) {
+  const parts = []
+  for (const block of asArray(content)) {
+    if (!block || typeof block !== 'object') continue
+    if (block.type === 'text' || block.type === 'reasoning') {
+      parts.push(`${block.type}: ${compact(block.text, limit)}`)
+    } else if (block.type === 'tool-result') {
+      parts.push(`tool-result${block.isError ? ' error' : ''}: ${blockText(block.content, limit)}`)
+    } else if (block.type === 'image') {
+      parts.push('[image attachment]')
+    }
+  }
+  return compact(parts.join('\n'), limit)
+}
+
+/** Project one raw event into a bounded, prompt-safe semantic evidence row. */
+export function compressTraceEvent(event) {
+  if (!event || typeof event !== 'object' || !Number.isSafeInteger(event.seq)) return null
+  if (event.type === 'assistant/chunk') return null
+  const data = event.data && typeof event.data === 'object' ? event.data : {}
+  const base = { seq: event.seq, time: event.time ?? null, type: String(event.type ?? 'unknown') }
+  if (event.type === 'turn/start') return { ...base, turn: data.turn }
+  if (event.type === 'turn/end') return { ...base, turn: data.turn, reason: compact(data.reason, 500) }
+  if (event.type === 'step/start' || event.type === 'step/end') {
+    return { ...base, turn: data.turn, step: data.step }
+  }
+  if (event.type === 'user/message') {
+    return { ...base, source: data.source?.kind ?? null, text: blockText(data.content, 1_800) }
+  }
+  if (event.type === 'assistant/message') {
+    return {
+      ...base,
+      turn: data.turn,
+      step: data.step,
+      text: blockText(data.message?.content, 2_000),
+      ...(data.usage ? { usage: data.usage } : {}),
+    }
+  }
+  if (event.type === 'tool/call') {
+    return {
+      ...base,
+      turn: data.turn,
+      step: data.step,
+      callId: compact(data.callId, 160),
+      tool: compact(data.name, 240),
+      arguments: compact(data.arguments, 1_400),
+    }
+  }
+  if (event.type === 'tool/result') {
+    const result = data.message?.content?.find?.(block => block?.type === 'tool-result')
+    return {
+      ...base,
+      turn: data.turn,
+      step: data.step,
+      callId: compact(data.message?.source?.callId ?? result?.toolCallId, 160),
+      error: data.error ? compact(data.error, 500) : null,
+      result: blockText(result?.content, 1_600),
+    }
+  }
+  if (event.type === 'request/header') {
+    return { ...base, route: data.header?.config ?? null, reason: data.reason ?? null }
+  }
+  if (event.type === 'request/context') {
+    return { ...base, context: compact(data, 600) }
+  }
+  return { ...base, data: compact(data, 800) }
+}
+
+export function closedTurnWindows(events) {
+  const starts = new Map()
+  const windows = []
+  for (const event of asArray(events)) {
+    if (event?.type === 'turn/start' && Number.isSafeInteger(event.data?.turn)) {
+      starts.set(event.data.turn, event)
+    }
+    if (event?.type !== 'turn/end' || !Number.isSafeInteger(event.data?.turn)) continue
+    const start = starts.get(event.data.turn)
+    windows.push({
+      turn: event.data.turn,
+      fromSeq: start?.seq ?? event.seq,
+      toSeq: event.seq,
+      startedAt: start?.time ?? event.time ?? null,
+      completedAt: event.time ?? null,
+      reason: event.data.reason ?? null,
+    })
+  }
+  return windows.sort((left, right) => left.toSeq - right.toSeq)
+}
+
+export function lastClosedSeq(events) {
+  return closedTurnWindows(events).at(-1)?.toSeq ?? -1
+}
+
+function turnAtSeq(windows, seq, side) {
+  const exact = windows.find(window => seq >= window.fromSeq && seq <= window.toSeq)
+  if (exact) return exact.turn
+  if (side === 'from') return windows.find(window => window.toSeq >= seq)?.turn ?? null
+  return [...windows].reverse().find(window => window.fromSeq <= seq)?.turn ?? null
+}
+
+function splitUnit(unit, maxInputChars, maxEvents) {
+  if (unit.entries.length === 0) return [{ ...unit, estimatedChars: 2, meaningfulEvents: 0 }]
+  const output = []
+  let partStart = unit.fromSeq
+  let entries = []
+  let chars = 2
+  for (const entry of unit.entries) {
+    const cost = JSON.stringify(entry).length + 1
+    if (entries.length > 0 && (chars + cost > maxInputChars || entries.length >= maxEvents)) {
+      const toSeq = entries.at(-1).seq
+      output.push({
+        fromSeq: partStart,
+        toSeq,
+        entries,
+        estimatedChars: chars,
+        meaningfulEvents: entries.length,
+      })
+      partStart = toSeq + 1
+      entries = []
+      chars = 2
+    }
+    entries.push(entry)
+    chars += cost
+  }
+  output.push({
+    fromSeq: partStart,
+    toSeq: unit.toSeq,
+    entries,
+    estimatedChars: chars,
+    meaningfulEvents: entries.length,
+  })
+  return output
+}
+
+/**
+ * Split a pending primary coverage range into contiguous, bounded segments.
+ * Returned ranges exactly cover fromSeq..throughSeq with neither gaps nor overlap.
+ */
+export function planCoverageSegments({ events, fromSeq, throughSeq, maxInputChars = 22_000, maxEvents = 160 }) {
+  if (!Number.isSafeInteger(fromSeq) || !Number.isSafeInteger(throughSeq) || fromSeq > throughSeq) return []
+  const selected = asArray(events)
+    .filter(event => Number.isSafeInteger(event?.seq) && event.seq >= fromSeq && event.seq <= throughSeq)
+    .sort((left, right) => left.seq - right.seq)
+  const units = []
+  let unitStart = fromSeq
+  let entries = []
+  for (const event of selected) {
+    const compressed = compressTraceEvent(event)
+    if (compressed) entries.push(compressed)
+    if (event.type === 'turn/end') {
+      units.push({ fromSeq: unitStart, toSeq: event.seq, entries })
+      unitStart = event.seq + 1
+      entries = []
+    }
+  }
+  if (unitStart <= throughSeq) units.push({ fromSeq: unitStart, toSeq: throughSeq, entries })
+
+  const fragments = units.flatMap(unit => splitUnit(unit, maxInputChars, maxEvents))
+  const packed = []
+  for (const fragment of fragments) {
+    const current = packed.at(-1)
+    const canMerge = current
+      && current.toSeq + 1 === fragment.fromSeq
+      && current.estimatedChars + fragment.estimatedChars <= maxInputChars
+      && current.meaningfulEvents + fragment.meaningfulEvents <= maxEvents
+    if (canMerge) {
+      current.toSeq = fragment.toSeq
+      current.entries.push(...fragment.entries)
+      current.estimatedChars += fragment.estimatedChars
+      current.meaningfulEvents += fragment.meaningfulEvents
+    } else {
+      packed.push({ ...fragment, entries: [...fragment.entries] })
+    }
+  }
+
+  const windows = closedTurnWindows(events)
+  return packed.map(segment => ({
+    ...segment,
+    fromTurn: turnAtSeq(windows, segment.fromSeq, 'from'),
+    toTurn: turnAtSeq(windows, segment.toSeq, 'to'),
+  }))
+}
+
+function pendingHighSeverity(report, coveredThroughSeq, closedThroughSeq) {
+  return asArray(report?.findings).some(finding => finding?.severity === 'high'
+    && asArray(finding.evidence).some(evidence => Number.isFinite(evidence?.seq)
+      && evidence.seq > coveredThroughSeq
+      && evidence.seq <= closedThroughSeq))
+}
+
+function terminalReason(reason) {
+  const kind = typeof reason === 'string' ? reason : reason?.kind
+  return ['error', 'blocked', 'aborted', 'interrupted', 'max-tokens'].includes(kind)
+}
+
+/** Decide whether pending closed history is due for a primary semantic call. */
+export function evaluateAutomaticTrigger({ events, history, report, settings, reason = 'turn-end' }) {
+  const normalized = normalizeAnalysisSettings(settings)
+  const coveredThroughSeq = Number.isSafeInteger(history?.semantic?.coveredThroughSeq)
+    ? history.semantic.coveredThroughSeq
+    : -1
+  const windows = closedTurnWindows(events)
+  const closedThroughSeq = windows.at(-1)?.toSeq ?? -1
+  const pendingEvents = asArray(events).filter(event => event?.seq > coveredThroughSeq && event?.seq <= closedThroughSeq)
+  const pendingTurns = windows.filter(window => window.toSeq > coveredThroughSeq)
+  const compressedChars = pendingEvents.reduce((sum, event) => {
+    const compressed = compressTraceEvent(event)
+    return sum + (compressed ? JSON.stringify(compressed).length + 1 : 0)
+  }, 0)
+
+  const base = {
+    coveredThroughSeq,
+    closedThroughSeq,
+    pendingEventCount: pendingEvents.length,
+    pendingTurnCount: pendingTurns.length,
+    compressedChars,
+  }
+  if (!normalized.auto.enabled) return { ...base, due: false, reason: 'disabled' }
+  if (closedThroughSeq <= coveredThroughSeq) return { ...base, due: false, reason: 'covered' }
+  if (!normalized.defaultRoute) return { ...base, due: false, reason: 'waiting-for-model' }
+  if (reason === 'quiet-period') return { ...base, due: true, reason: 'quiet-period' }
+  if (pendingHighSeverity(report, coveredThroughSeq, closedThroughSeq)) return { ...base, due: true, reason: 'high-severity' }
+  if (pendingTurns.some(window => terminalReason(window.reason))) return { ...base, due: true, reason: 'terminal-turn' }
+  if (pendingTurns.length >= normalized.auto.everyTurns) return { ...base, due: true, reason: 'turn-threshold' }
+  if (pendingEvents.length >= normalized.auto.maxPendingEvents) return { ...base, due: true, reason: 'event-threshold' }
+  if (compressedChars >= normalized.auto.maxInputChars) return { ...base, due: true, reason: 'input-threshold' }
+  return { ...base, due: false, reason: 'accumulating' }
+}
+
+function compactReport(report, fromSeq, toSeq) {
+  const findings = asArray(report?.findings)
+    .filter(finding => asArray(finding.evidence).some(item => item?.seq >= fromSeq && item?.seq <= toSeq))
+    .slice(0, 8)
+    .map(finding => ({
+      severity: finding.severity,
+      category: finding.category,
+      title: compact(finding.title, 500),
+      summary: compact(finding.summary, 900),
+      rootCause: compact(finding.rootCause, 900),
+      recommendation: compact(finding.recommendation, 900),
+      evidence: asArray(finding.evidence)
+        .filter(item => item?.seq >= fromSeq && item?.seq <= toSeq)
+        .slice(0, 6)
+        .map(item => ({
+          seq: item.seq,
+          turn: item.turn ?? null,
+          step: item.step ?? null,
+          toolName: compact(item.toolName, 240),
+          excerpt: compact(item.excerpt, 800),
+        })),
+    }))
+  return {
+    status: report?.status ? { code: report.status.code, label: report.status.label } : null,
+    summary: compact(report?.summary, 1_200),
+    rootCause: compact(report?.rootCause, 1_200),
+    metrics: report?.metrics ?? {},
+    findings,
+    phases: asArray(report?.phases).filter(phase => {
+      const start = phase?.seqStart ?? phase?.seqEnd
+      const end = phase?.seqEnd ?? phase?.seqStart
+      return Number.isFinite(start) && Number.isFinite(end) && end >= fromSeq && start <= toSeq
+    }).slice(0, 8).map(phase => ({
+      title: compact(phase.title, 400),
+      status: phase.status,
+      summary: compact(phase.summary, 700),
+      seqStart: phase.seqStart,
+      seqEnd: phase.seqEnd,
+    })),
+    lessons: asArray(report?.lessons).slice(0, 8).map(lesson => ({
+      title: compact(lesson.title, 400),
+      text: compact(lesson.text, 700),
+    })),
+  }
+}
+
+function sensitiveFieldName(key) {
+  const normalized = String(key ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+  return normalized === 'authorization'
+    || normalized === 'apikey'
+    || normalized.endsWith('token')
+    || normalized.endsWith('secret')
+    || normalized.endsWith('password')
+    || normalized.endsWith('cookie')
+}
+
+function redactValue(value, key = '') {
+  if (key && sensitiveFieldName(key) && value !== null && value !== undefined) return '[REDACTED]'
+  if (typeof value === 'string') return redactTraceText(value)
+  if (Array.isArray(value)) return value.map(child => redactValue(child))
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, redactValue(child, childKey)]))
+}
+
+function serializedChars(value) {
+  return JSON.stringify(value).length
+}
+
+function capStrings(value, limit) {
+  if (typeof value === 'string') return compact(value, limit)
+  if (Array.isArray(value)) return value.map(item => capStrings(item, limit))
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, capStrings(child, limit)]))
+}
+
+function fitSemanticEnvelope(envelope, maxChars) {
+  if (!Number.isSafeInteger(maxChars) || maxChars <= 0 || serializedChars(envelope) <= maxChars) return envelope
+  const fitted = structuredClone(envelope)
+  fitted.previousContinuitySummary = compact(fitted.previousContinuitySummary, 1_500)
+  fitted.deterministic.metrics = {}
+  fitted.deterministic.lessons = fitted.deterministic.lessons.slice(0, 3)
+  fitted.deterministic.phases = fitted.deterministic.phases.slice(0, 4)
+  if (serializedChars(fitted) <= maxChars) return fitted
+  for (const limit of [600, 320, 180, 100, 60]) {
+    fitted.userGoal = compact(fitted.userGoal, limit * 2)
+    fitted.previousContinuitySummary = compact(fitted.previousContinuitySummary, limit * 2)
+    fitted.deterministic = capStrings(fitted.deterministic, limit)
+    fitted.evidence = capStrings(fitted.evidence, limit)
+    if (serializedChars(fitted) <= maxChars) return fitted
+  }
+  fitted.deterministic = {
+    status: fitted.deterministic.status,
+    summary: compact(fitted.deterministic.summary, 160),
+    rootCause: compact(fitted.deterministic.rootCause, 160),
+    metrics: {},
+    findings: [],
+    phases: [],
+    lessons: [],
+  }
+  fitted.evidence = fitted.evidence.map(item => ({
+    seq: item.seq,
+    time: item.time ?? null,
+    type: compact(item.type, 80),
+    ...(item.turn !== undefined ? { turn: item.turn } : {}),
+    ...(item.step !== undefined ? { step: item.step } : {}),
+    ...(item.tool ? { tool: compact(item.tool, 80) } : {}),
+    ...(item.error ? { error: compact(item.error, 100) } : {}),
+    ...(item.reason ? { reason: compact(item.reason, 100) } : {}),
+  }))
+  if (serializedChars(fitted) <= maxChars) return fitted
+  throw Object.assign(new Error(`Trace Insight could not fit the semantic envelope within ${maxChars} characters.`), {
+    code: 'ENVELOPE_TOO_LARGE',
+  })
+}
+
+export function buildSemanticEnvelope({ rawSession, segment, report, previousSummary = '', maxChars }) {
+  const events = rawSession?.log?.events ?? rawSession?.events ?? []
+  const header = rawSession?.log?.session ?? rawSession?.session ?? {}
+  const entries = segment.entries ?? asArray(events)
+    .filter(event => event?.seq >= segment.fromSeq && event?.seq <= segment.toSeq)
+    .map(compressTraceEvent)
+    .filter(Boolean)
+  const envelope = redactValue({
+    schemaVersion: 1,
+    session: {
+      id: String(header?.id ?? report?.sessionId ?? ''),
+      createdAt: header?.createdAt ?? null,
+      cwd: header?.cwd ? '[workspace path present]' : null,
+    },
+    coverage: {
+      fromSeq: segment.fromSeq,
+      toSeq: segment.toSeq,
+      fromTurn: segment.fromTurn ?? null,
+      toTurn: segment.toTurn ?? null,
+    },
+    userGoal: report?.userGoal ?? '',
+    previousContinuitySummary: compact(previousSummary, 6_000),
+    deterministic: compactReport(report, segment.fromSeq, segment.toSeq),
+    evidence: entries,
+  })
+  return fitSemanticEnvelope(envelope, maxChars)
+}
+
+export function stableInputHash(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}

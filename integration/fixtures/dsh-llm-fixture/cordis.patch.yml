@@ -1,0 +1,3 @@
+- insert:
+    - id: trace-insight-fixture-llm
+      name: dsh-plugin-trace-insight-fixture-llm

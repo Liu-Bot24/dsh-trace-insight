@@ -1,0 +1,16 @@
+{
+  "name": "dsh-plugin-trace-insight-fixture-llm",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
