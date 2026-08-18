@@ -18,12 +18,12 @@ DSH records messages, tool calls, and execution events, but long tasks can conta
 - Is a claimed completion supported by sufficient evidence?
 - What has happened so far during a long-running Turn?
 
-Trace Insight reads the structured DSH Session Event Log directly. Deterministic rule analysis establishes the factual baseline, while an independently configured model can explain decisions, risks, and possible improvements.
+Trace Insight reads the structured DSH Session Event Log directly. Local rule analysis establishes the factual baseline, while an independently configured model can explain decisions, risks, and possible improvements.
 
 ## Features
 
 - **Continuous review**: organize rule and model analysis by Turn and Seq, including stable progress from a long-running open Turn.
-- **Rule analysis**: detect tool failures, repeated failures, no-progress loops, path guessing, tool misuse, completion signals, and verification gaps locally without calling a model.
+- **Rule analysis**: detect tool failures, repeated failures, no-progress loops, path guessing, tool misuse, completion signals, and evidence gaps locally without calling a model.
 - **Model interpretation**: analyze strategy, root cause, risk, next steps, and reusable lessons through a separate DSH model without changing the development Agent's model.
 - **Evidence navigation**: trace conclusions back to Seq, Turn, Step, Tool, excerpts, and original event context.
 - **Task overview**: summarize development phases, tool usage, and issue threads across the Session, with drill-down to member records.
@@ -33,16 +33,14 @@ Trace Insight reads the structured DSH Session Event Log directly. Deterministic
 
 ## Interface
 
-With the optional shell patch installed, DSH Chat or Trajectory remains on the left while Trace Insight opens in a resizable inspector on the right. This allows the original execution and its interpretation to be viewed together.
+DSH Chat or Trajectory stays on the left while Trace Insight appears in a resizable right sidebar, so the original execution and its interpretation can be viewed together.
 
-The main areas are:
+The sidebar contains four pages:
 
 - **Review**: the timeline of rule and model analysis.
 - **Overview**: task-wide phases, tools, and issue summaries.
 - **Compare**: two successful analyses of the same trajectory range.
 - **Settings**: model selection, automatic analysis policy, resource limits, and export.
-
-Without the shell patch, the plugin remains usable as a separate DSH conversation tab.
 
 ### Evidence navigation
 
@@ -64,63 +62,39 @@ Compare accepts two successful analyses with the same range and input, then show
 
 ## Installation
 
-### Requirements
+DeepSeek Harness `0.1.0-rc.7` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
 
-- DeepSeek Harness `0.1.0-rc.6`
-- DSH Web
-- Node.js `22.19.0` or newer
+Download or clone this repository, then run the installer from the repository root. The installer prepares DSH, installs Trace Insight, and adds the right sidebar.
 
 ### Windows
 
-Clone or download this repository, then run the following commands from its root:
+Double-click `安装到DSH.cmd`, or run this command in PowerShell:
 
 ```powershell
-npm pack
-Set-ExecutionPolicy -Scope Process Bypass
-.\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
-
-After `npm pack`, you can also double-click `安装到DSH.cmd`.
 
 ### macOS or Linux
 
 ```bash
-npm pack
 bash ./install.sh
 ```
 
-The installer adds the plugin to the DSH `web` profile and verifies the resulting configuration with `--dump-config`.
-
-After installation, stop the old DSH process completely and restart it. The following command is the same on Windows, macOS, and Linux:
+Start DSH after installation:
 
 ```shell
-npx --yes @deepseek-ai/dsh@0.1.0-rc.6 web
+npx --yes @deepseek-ai/dsh@0.1.0-rc.7 web
 ```
 
-If `dsh` is installed globally, run `dsh web` instead.
-
-## Enable the right-side inspector on Windows
-
-Run the following command in Windows PowerShell:
-
-```powershell
-pwsh -File .\patches\apply-shell-patch.ps1
-```
-
-The patch supports only the verified DSH `0.1.0-rc.6` layout. Before writing, it verifies the DSH version and the SHA-256 of every target file, then backs up all files that will be replaced. It refuses unknown versions or modified layouts instead of forcing an overwrite.
-
-After the patch succeeds, refresh the browser with `Ctrl+F5`. The script prints the matching restore command. Do not force the old patch onto a newer DSH build.
-
-The right-side inspector patch currently supports Windows only. Trace Insight can still be installed and used on macOS and Linux, where it appears as a separate DSH conversation tab.
+Open any Session and select **Trace Insight** to open the sidebar.
 
 ## First use
 
-1. Open any DSH Session.
-2. Select **Trace Insight** to open the right-side inspector or the fallback conversation tab.
-3. Open **Review**. Rule analysis reads the existing trajectory without requiring a model.
-4. To enable model interpretation, open **Settings → Model and automatic policy** and select a provider/model registered in DSH.
-5. Wait for automatic analysis or select a trajectory range for manual analysis.
-6. Open an evidence entry to inspect the corresponding original event and surrounding context.
+1. Open any DSH Session and select **Trace Insight**.
+2. Open **Review**. Rule analysis reads the existing trajectory without requiring a model.
+3. To enable model interpretation, open **Settings → Model and automatic policy** and select a provider/model registered in DSH.
+4. Wait for automatic analysis or select a trajectory range for manual analysis.
+5. Open an evidence entry to inspect the corresponding original event and surrounding context.
 
 Opening or refreshing Trace Insight, filtering the timeline, viewing evidence, opening Overview, or comparing existing analyses does not call a model.
 
@@ -132,7 +106,7 @@ The Trace Insight model is independent of the development Agent's main model. Yo
 - a model override for the current Session;
 - a temporary model for one analysis run.
 
-Only the first two persist. Temporarily selecting a stronger model does not replace the default used by future automatic analysis.
+Only the first two persist. Temporarily selecting another model does not replace the default used by future automatic analysis.
 
 Automatic analysis runs only after a Session has been observed during live execution, a default analysis model is configured, and a trigger condition is met. A failed, cancelled, or invalid model result cannot advance analysis progress past that range.
 
@@ -158,7 +132,7 @@ Exports are separated into:
 - **Raw Session history**: original DSH events, surface, and Session lineage.
 - **Combined bundle**: both analysis history and raw Session history.
 
-Raw history and combined bundles require explicit confirmation. Analysis history may also contain evidence excerpts and model output, so inspect it before sharing.
+Exporting raw history or a combined bundle requires confirmation. Analysis history may also contain evidence excerpts and model output, so inspect it before sharing.
 
 ## Read-only, privacy, and cost boundaries
 
@@ -172,51 +146,49 @@ Raw history and combined bundles require explicit confirmation. Analysis history
 
 ## Uninstall
 
+Stop DSH before uninstalling.
+
 ### Windows
 
-```powershell
-.\uninstall.ps1
-```
+Double-click `卸载插件.cmd`, or run this command in PowerShell:
 
-You can also double-click `卸载插件.cmd`. Uninstalling the plugin does not automatically delete analysis history stored under `%DSH_HOME%\trace-insight`.
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
 
 ### macOS or Linux
 
-If `dsh` is installed globally:
-
 ```bash
-dsh plugin --profile web remove dsh-plugin-trace-insight
+bash ./uninstall.sh
 ```
 
-Otherwise use:
-
-```bash
-npx --yes @deepseek-ai/dsh@0.1.0-rc.6 plugin --profile web remove dsh-plugin-trace-insight
-```
-
-Restart DSH after uninstalling. The command does not automatically delete analysis history under `$DSH_HOME/trace-insight` or `$HOME/.dsh/trace-insight`.
+The uninstaller removes both Trace Insight and the right sidebar. Existing analysis history remains in the data directory.
 
 ## Troubleshooting
 
-### The Trace Insight entry is missing
+### The installer says DSH is running
+
+Close the DSH terminal or window, then run the installer again.
+
+### The Trace Insight entry or sidebar is missing
+
+Stop DSH completely, run the installer again, and start DSH. If the entry still does not appear, check whether the plugin is present in the `web` profile.
 
 Windows PowerShell:
 
 ```powershell
-dsh --profile web --dump-config | Select-String "trace-insight"
+npx --yes @deepseek-ai/dsh@0.1.0-rc.7 --profile web --dump-config | Select-String "trace-insight"
 ```
 
 macOS or Linux:
 
 ```bash
-dsh --profile web --dump-config | grep "trace-insight"
+npx --yes @deepseek-ai/dsh@0.1.0-rc.7 --profile web --dump-config | grep "trace-insight"
 ```
 
-Then stop the old DSH process completely, run `dsh web` again, and refresh with `Ctrl+F5`.
+### The page is waiting for a default model
 
-### The page says that it is waiting for a default model
-
-This is not an error. Rule analysis continues to work. Open **Settings → Model and automatic policy**, select a model registered in DSH, and save it.
+Rule analysis continues to work. Open **Settings → Model and automatic policy**, select a model registered in DSH, and save it.
 
 ### Model analysis fails
 
@@ -225,29 +197,6 @@ The failed record is preserved, and analysis progress does not skip the failed r
 ### Data cannot be loaded from a LAN address
 
 Trace Insight Host RPC is loopback-only. Use `127.0.0.1` or `localhost` on the same machine that runs DSH.
-
-## Compatibility
-
-| Component | Verified version |
-| --- | --- |
-| Trace Insight | `1.0.0` |
-| DeepSeek Harness | `0.1.0-rc.6` |
-| DSH Web | Verified |
-| Node.js | `22.19.0` or newer |
-| Core plugin | Windows, macOS, and Linux |
-| Right-side inspector patch | Windows only |
-
-DSH is still in preview. Before upgrading DSH, confirm that a compatible Trace Insight build and inspector patch are available.
-
-## Development
-
-```powershell
-npm run build
-npm test
-npm pack
-```
-
-`client.js` is generated from `src/client-template.js` and must remain synchronized.
 
 ## License
 

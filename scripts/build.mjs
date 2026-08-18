@@ -6,7 +6,7 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 const templatePath = resolve(root, 'src/client-template.js')
 const outputPath = resolve(root, 'client.js')
 
-const template = await readFile(templatePath, 'utf8')
+const template = (await readFile(templatePath, 'utf8')).replace(/\r\n?/gu, '\n')
 const indentedBody = template
   .split('\n')
   .map(line => line.trim().length === 0 ? '' : `    ${line}`)

@@ -1031,7 +1031,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'tiSemanticText' }, output.rootCauses.join('；')),
         ) : null,
         (output.nextSteps || []).length ? h('div', { className: 'tiSemanticSection' },
-          h('div', { className: 'tiSemanticLabel' }, '当时更好的下一步'),
+          h('div', { className: 'tiSemanticLabel' }, '建议的下一步'),
           h('div', { className: 'tiSemanticText' }, output.nextSteps.join('；')),
         ) : null,
         (output.lessons || []).length ? h('div', { className: 'tiSemanticSection' },

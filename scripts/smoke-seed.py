@@ -5,9 +5,11 @@ from pathlib import Path
 
 import zstandard
 
+from smoke_paths import project_key
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SMOKE_HOME = REPO_ROOT / ".smoke-home"
-WORKSPACE_STORAGE_KEY = f"--{str(REPO_ROOT).replace(':', '').replace(chr(92), '-').replace('/', '-')}--"
+WORKSPACE_STORAGE_KEY = project_key(str(REPO_ROOT))
 
 workspace = {
     "unit": {"name": "workspace", "version": 2},

@@ -1,0 +1,3 @@
+client.js text eol=lf
+src/client-template.js text eol=lf
+patches/dsh-client-ui-layout/* text eol=lf

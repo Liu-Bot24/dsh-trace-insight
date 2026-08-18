@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "patchId": "trace-insight-inspector-v1",
+  "targetPackage": "@deepseek-ai/dsh-client-ui-layout",
+  "files": [
+    {
+      "name": "client.js",
+      "target": "lib/client.js",
+      "payload": "dsh-client-ui-layout/client.js",
+      "patchedSha256": "19766671b80fb003d32ffc663e5d118822cbc47e92fb0e2eed19a3bf633ac65f"
+    },
+    {
+      "name": "index.d.ts",
+      "target": "lib/types/client/index.d.ts",
+      "payload": "dsh-client-ui-layout/index.d.ts",
+      "patchedSha256": "c2e7b2b86686a60d18ab8caaa3c7e317efea2fd18e1fa2f5e2285cf55c5f8a04"
+    },
+    {
+      "name": "service.d.ts",
+      "target": "lib/types/client/service.d.ts",
+      "payload": "dsh-client-ui-layout/service.d.ts",
+      "patchedSha256": "a32d3f04e85b398fb4f352a4b1c893fb9aee9f038e49b00ec0b258237ee9ef50"
+    },
+    {
+      "name": "stores.d.ts",
+      "target": "lib/types/client/stores.d.ts",
+      "payload": "dsh-client-ui-layout/stores.d.ts",
+      "patchedSha256": "aee06783752268760ff4b39c5a23e6c9d5ad5335809a363250bf9a7c825d903d"
+    },
+    {
+      "name": "AppFrame.d.ts",
+      "target": "lib/types/client/AppFrame.d.ts",
+      "payload": "dsh-client-ui-layout/AppFrame.d.ts",
+      "patchedSha256": "792f26577bb42b1989968839a537d9fbbe1f9da34214d9daeb15a8d7cdada64e"
+    }
+  ],
+  "targets": [
+    {
+      "id": "dsh-rc6-layout-rc6",
+      "dshVersions": ["0.1.0-rc.6"],
+      "webAppVersions": ["0.1.0-rc.6"],
+      "layoutVersion": "0.1.0-rc.6",
+      "originalSha256": {
+        "client.js": "8807ee56f56f8fbf6f6704a3a5e8aa6b45e9bd1a73b34f4d314c64d9e37d26fe",
+        "index.d.ts": "a7f4afb8867746bbdd4b92a98263a16641d61d1f462a49251a462396610c8074",
+        "service.d.ts": "4feb499ba08d174bedf9f6266f86b444931e1e3d5bb1b79a34a8bca306be50cf",
+        "stores.d.ts": "4577e8391513aec24705c4ebdc6531d5020e8a8d45c0347c35823a524ea3f084",
+        "AppFrame.d.ts": "ef1cbcaf436971eb1fe5f4e24300072f80537343b38763a7a6be9861f5f3d7ff"
+      }
+    },
+    {
+      "id": "dsh-rc6-or-rc7-layout-rc7",
+      "dshVersions": ["0.1.0-rc.6", "0.1.0-rc.7"],
+      "webAppVersions": ["0.1.0-rc.7"],
+      "layoutVersion": "0.1.0-rc.7",
+      "originalSha256": {
+        "client.js": "744b27c101f129e2a3cd4dcbad8e0932c1950459cea733a8d0d32d238af473b0",
+        "index.d.ts": "a7f4afb8867746bbdd4b92a98263a16641d61d1f462a49251a462396610c8074",
+        "service.d.ts": "4feb499ba08d174bedf9f6266f86b444931e1e3d5bb1b79a34a8bca306be50cf",
+        "stores.d.ts": "4577e8391513aec24705c4ebdc6531d5020e8a8d45c0347c35823a524ea3f084",
+        "AppFrame.d.ts": "ef1cbcaf436971eb1fe5f4e24300072f80537343b38763a7a6be9861f5f3d7ff"
+      }
+    }
+  ]
+}

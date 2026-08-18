@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-trace-insight",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A continuous, model-assisted semantic debugger for DeepSeek Harness trajectories.",
   "type": "module",
   "main": "./index.js",
@@ -16,9 +16,16 @@
     "README.md",
     "README.en.md",
     "LICENSE",
+    "install.sh",
+    "install.ps1",
+    "uninstall.sh",
+    "uninstall.ps1",
+    "安装到DSH.cmd",
+    "卸载插件.cmd",
     "src",
     "patches",
-    "scripts/build.mjs"
+    "scripts/build.mjs",
+    "scripts/find-npx-dsh.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -52,7 +59,7 @@
   ],
   "license": "MIT",
   "dshCompatibility": {
-    "version": "0.1.0-rc.6",
+    "version": "0.1.0-rc.7",
     "surface": "web"
   }
 }

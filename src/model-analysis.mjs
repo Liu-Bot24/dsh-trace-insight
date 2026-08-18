@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export const SEMANTIC_PROMPT_VERSION = 'trace-insight-semantic-v3'
+export const SEMANTIC_PROMPT_VERSION = 'trace-insight-semantic-v4'
 
 const SYSTEM_PROMPT = `你是 DSH Trace Insight 的旁路轨迹分析器。你的唯一任务是解释一段已经结构化、脱敏的 Agent 执行证据。
 
@@ -24,7 +24,7 @@ JSON 结构：
   "narrative": "这一段发生了什么，以及决策链如何演变",
   "assessment": "对关键判断的总体评价",
   "rootCauses": ["根因"],
-  "nextSteps": ["当时更好的下一步"],
+  "nextSteps": ["建议的下一步"],
   "lessons": ["可复用经验"],
   "evidenceRefs": [{"seq": 1, "turn": 1, "note": "证据作用"}],
   "risk": "low|medium|high",

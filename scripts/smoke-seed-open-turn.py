@@ -9,9 +9,11 @@ from pathlib import Path
 
 import zstandard
 
+from smoke_paths import project_key
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SMOKE_HOME = REPO_ROOT / ".smoke-home"
-WORKSPACE_STORAGE_KEY = f"--{str(REPO_ROOT).replace(':', '').replace(chr(92), '-').replace('/', '-')}--"
+WORKSPACE_STORAGE_KEY = project_key(str(REPO_ROOT))
 SESSION_ID = "session-smoke0002-0000-0000-0000-000000000002"
 CREATED_AT = 1786900000000
 NOW_ISO = datetime.now(timezone.utc).isoformat()

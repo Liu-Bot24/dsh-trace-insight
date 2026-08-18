@@ -3,15 +3,18 @@ param(
   [string]$Profile = 'web',
   [string]$PackagePath = '',
   [string]$SourceRoot = '',
+  [string]$DshRoot = '',
   [switch]$StartAfterInstall
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.0.0'
-$TestedDshVersion = '0.1.0-rc.6'
+$PluginVersion = '1.1.0'
+$DshVersion = '0.1.0-rc.7'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
+$NpxFinder = Join-Path $Here 'scripts\find-npx-dsh.mjs'
 if ([string]::IsNullOrWhiteSpace($PackagePath)) {
   $PackagePath = Join-Path $Here "dsh-plugin-trace-insight-$PluginVersion.tgz"
 }
@@ -91,19 +94,14 @@ function Resolve-DshRunner {
     }
   }
 
-  $dsh = Get-Command dsh -ErrorAction SilentlyContinue
-  if ($null -ne $dsh) {
-    return [pscustomobject]@{ FilePath = $dsh.Source; Prefix = @(); Display = 'dsh'; WorkingDirectory = $null }
-  }
-
   $npx = Get-Command npx -ErrorAction SilentlyContinue
   if ($null -eq $npx) {
-    throw '未找到 dsh 或 npx。请先安装 Node.js 22.19 或更高版本。'
+    throw '未找到 npx。请先安装 Node.js 22.19 或更高版本。'
   }
   return [pscustomobject]@{
     FilePath = $npx.Source
-    Prefix = @('--yes', "@deepseek-ai/dsh@$TestedDshVersion")
-    Display = "npx --yes @deepseek-ai/dsh@$TestedDshVersion"
+    Prefix = @('--yes', "@deepseek-ai/dsh@$DshVersion")
+    Display = "npx --yes @deepseek-ai/dsh@$DshVersion"
     WorkingDirectory = $null
   }
 }
@@ -142,10 +140,6 @@ function Test-DshRunning {
   return $false
 }
 
-if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
-  throw "没有找到安装包：$PackagePath"
-}
-
 Write-Step '检查 Node.js'
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($null -eq $node) {
@@ -164,32 +158,79 @@ try {
 }
 Write-Host "Node.js $nodeVersionText" -ForegroundColor Green
 
+if (Test-DshRunning) {
+  throw 'DSH 正在运行。请先关闭 DSH，再重新运行安装程序。'
+}
+
+if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
+  $npm = Get-Command npm -ErrorAction SilentlyContinue
+  if ($null -eq $npm) { throw '未找到 npm，无法生成 Trace Insight 安装包。' }
+  Write-Step '生成 Trace Insight 安装包'
+  Push-Location $Here
+  try { $null = Invoke-Checked -FilePath $npm.Source -Arguments @('pack', '--ignore-scripts', '--silent') -Capture }
+  finally { Pop-Location }
+}
+if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
+  throw "无法生成安装包：$PackagePath"
+}
+
 if (-not [string]::IsNullOrWhiteSpace($SourceRoot)) {
   $null = Ensure-Pnpm
 }
 $runner = Resolve-DshRunner
 Write-Host "使用：$($runner.Display)" -ForegroundColor DarkGray
 
+if (-not (Test-Path -LiteralPath $PatchCore -PathType Leaf)) {
+  throw "缺少右侧栏安装组件：$PatchCore"
+}
+$versionOutput = Invoke-Dsh -Runner $runner -Arguments @('--version') -Capture
+$versionText = ($versionOutput -join ' ').Trim()
+if ($versionText -notmatch [regex]::Escape($DshVersion)) {
+  throw "当前 DSH 是 $versionText；需要 $DshVersion。"
+}
+
+if ([string]::IsNullOrWhiteSpace($DshRoot)) {
+  if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
+    if (-not (Test-Path -LiteralPath $NpxFinder -PathType Leaf)) { throw "缺少 DSH 定位组件：$NpxFinder" }
+    $DshRoot = ((Invoke-Checked -FilePath $node.Source -Arguments @($NpxFinder, $DshVersion) -Capture) -join '').Trim()
+  } else {
+    throw '使用 -SourceRoot 时必须同时提供 -DshRoot。'
+  }
+}
+
+$patchRootArguments = @()
+if (-not [string]::IsNullOrWhiteSpace($DshRoot)) {
+  $patchRootArguments = @('--dsh-root', [System.IO.Path]::GetFullPath($DshRoot))
+}
+$statusOutput = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'status') + $patchRootArguments + @('--json')) -Capture
+$patchStatus = (($statusOutput -join [Environment]::NewLine) | ConvertFrom-Json)
+if ($patchStatus.state -ne 'original' -and $patchStatus.state -ne 'patched') {
+  throw '当前 DSH 壳层不是可安全安装的状态。'
+}
+$patchWasOriginal = $patchStatus.state -eq 'original'
+
+Write-Step '安装右侧栏'
+$null = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'apply') + $patchRootArguments + @('--json')) -Capture
+
 try {
-  $versionOutput = Invoke-Dsh -Runner $runner -Arguments @('--version') -Capture
-  $versionText = ($versionOutput -join ' ').Trim()
-  if ($versionText -and $versionText -notmatch [regex]::Escape($TestedDshVersion)) {
-    Write-Host "提示：插件针对 DSH $TestedDshVersion 验证；当前命令报告为 $versionText。安装会继续，随后由配置验证兜底。" -ForegroundColor Yellow
+  Write-Step "安装到 DSH profile：$Profile"
+  Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'add', $PackagePath)
+
+  Write-Step '检查安装结果'
+  $dump = Invoke-Dsh -Runner $runner -Arguments @('--profile', $Profile, '--dump-config') -Capture
+  $dumpText = $dump -join [Environment]::NewLine
+  if ($dumpText -notmatch 'dsh-plugin-trace-insight') {
+    throw 'Trace Insight 没有进入 DSH web profile。'
   }
 } catch {
-  Write-Host "未能读取 DSH 版本，将继续安装：$($_.Exception.Message)" -ForegroundColor Yellow
+  $installError = $_
+  try { Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'remove', 'dsh-plugin-trace-insight') } catch {}
+  if ($patchWasOriginal) {
+    try { $null = Invoke-Checked -FilePath $node.Source -Arguments @($PatchCore, 'restore-active', '--json') -Capture } catch {}
+  }
+  throw $installError
 }
-
-Write-Step "安装到 DSH profile：$Profile"
-Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'add', $PackagePath)
-
-Write-Step '验证组合配置'
-$dump = Invoke-Dsh -Runner $runner -Arguments @('--profile', $Profile, '--dump-config') -Capture
-$dumpText = $dump -join [Environment]::NewLine
-if ($dumpText -notmatch 'dsh-plugin-trace-insight') {
-  throw '安装命令已返回成功，但 dump-config 中没有找到 dsh-plugin-trace-insight。插件尚未真正进入组合配置。'
-}
-Write-Host '配置验证通过：trace-insight 已进入 DSH 组合。' -ForegroundColor Green
+Write-Host 'Trace Insight 和右侧栏已安装。' -ForegroundColor Green
 
 $alreadyRunning = Test-DshRunning
 if ($StartAfterInstall -and -not $alreadyRunning) {
@@ -200,11 +241,11 @@ if ($StartAfterInstall -and -not $alreadyRunning) {
   } else {
     Start-Process -FilePath $runner.FilePath -ArgumentList $startArguments | Out-Null
   }
-  Write-Host 'DSH 已在新窗口启动。打开会话后，顶部会出现“解读”标签。' -ForegroundColor Green
+  Write-Host 'DSH 已在新窗口启动。打开会话后即可使用右侧 Trace Insight。' -ForegroundColor Green
 } elseif ($alreadyRunning) {
   Write-Host "`n插件已经安装，但检测到 DSH 正在运行。请关闭当前 DSH 终端并用原来的 dsh web 命令重新启动一次；客户端插件清单只在启动时扫描。" -ForegroundColor Yellow
 } else {
-  Write-Host "`n安装完成。重新运行 dsh web 后，顶部会出现“解读”标签。" -ForegroundColor Green
+  Write-Host "`n安装完成。重新运行 dsh web 后即可使用右侧 Trace Insight。" -ForegroundColor Green
 }
 
-Write-Host "`n卸载命令：$($runner.Display) plugin --profile $Profile remove dsh-plugin-trace-insight" -ForegroundColor DarkGray
+Write-Host "`n卸载命令：powershell -ExecutionPolicy Bypass -File `"$(Join-Path $Here 'uninstall.ps1')`"" -ForegroundColor DarkGray
