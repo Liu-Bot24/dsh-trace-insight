@@ -617,26 +617,47 @@ window.__ModuleLoader__.load({
     }
 
     function timelineTurn(item) {
-      const value = item?.toTurn ?? item?.fromTurn
-      return Number.isSafeInteger(value) ? value : null
+      for (const value of [item?.toTurn, item?.fromTurn]) {
+        if (Number.isSafeInteger(value)) return value
+      }
+      return null
     }
 
-    function sortTimelineForDisplay(items) {
+    function timelineTime(item) {
+      for (const value of [item?.createdAt, item?.completedAt, item?.capturedAt]) {
+        const parsed = value ? Date.parse(value) : Number.NaN
+        if (Number.isFinite(parsed)) return parsed
+      }
+      return null
+    }
+
+    function compareTimelineNumber(left, right, descending) {
+      const leftKnown = Number.isFinite(left)
+      const rightKnown = Number.isFinite(right)
+      if (leftKnown !== rightKnown) return leftKnown ? -1 : 1
+      if (!leftKnown) return 0
+      return descending ? right - left : left - right
+    }
+
+    function sortTimelineForDisplay(items, turnDirection = 'desc', withinTurnDirection = turnDirection) {
+      const turnDescending = turnDirection !== 'asc'
+      const withinTurnDescending = withinTurnDirection !== 'asc'
       const layerOrder = { programmatic: 0, semantic: 1, job: 2, diagnostic: 3 }
       return [...items].sort((left, right) => {
         const leftTurn = timelineTurn(left)
         const rightTurn = timelineTurn(right)
-        if (leftTurn !== null || rightTurn !== null) {
-          if (leftTurn === null) return 1
-          if (rightTurn === null) return -1
-          if (leftTurn !== rightTurn) return rightTurn - leftTurn
-          if ((left.fromSeq ?? -1) !== (right.fromSeq ?? -1)) return (left.fromSeq ?? -1) - (right.fromSeq ?? -1)
-          if ((left.toSeq ?? -1) !== (right.toSeq ?? -1)) return (left.toSeq ?? -1) - (right.toSeq ?? -1)
-          const leftLayer = layerOrder[historyLayer(left)] ?? 9
-          const rightLayer = layerOrder[historyLayer(right)] ?? 9
-          if (leftLayer !== rightLayer) return leftLayer - rightLayer
-        } else if ((left.toSeq ?? -1) !== (right.toSeq ?? -1)) return (left.toSeq ?? -1) - (right.toSeq ?? -1)
-        return String(left.createdAt || left.capturedAt || '').localeCompare(String(right.createdAt || right.capturedAt || ''))
+        const turnOrder = compareTimelineNumber(leftTurn, rightTurn, turnDescending)
+        if (turnOrder) return turnOrder
+        const fromOrder = compareTimelineNumber(Number.isSafeInteger(left.fromSeq) ? left.fromSeq : null, Number.isSafeInteger(right.fromSeq) ? right.fromSeq : null, withinTurnDescending)
+        if (fromOrder) return fromOrder
+        const toOrder = compareTimelineNumber(Number.isSafeInteger(left.toSeq) ? left.toSeq : null, Number.isSafeInteger(right.toSeq) ? right.toSeq : null, withinTurnDescending)
+        if (toOrder) return toOrder
+        const leftLayer = layerOrder[historyLayer(left)] ?? 9
+        const rightLayer = layerOrder[historyLayer(right)] ?? 9
+        if (leftLayer !== rightLayer) return leftLayer - rightLayer
+        const timeOrder = compareTimelineNumber(timelineTime(left), timelineTime(right), withinTurnDescending)
+        if (timeOrder) return timeOrder
+        return 0
       })
     }
 
@@ -1828,7 +1849,9 @@ window.__ModuleLoader__.load({
       const [operations, setOperations] = useState({})
       const [mode, setMode] = useState('review')
       const [filter, setFilter] = useState('all')
-      const [historyFilters, setHistoryFilters] = useState({ query: '', fromSeq: '', toSeq: '', fromTurn: '', toTurn: '', severities: '', statuses: '', triggers: '', models: '', layers: '' })
+      const [turnSortDirection, setTurnSortDirection] = useState('desc')
+      const [withinTurnSortDirection, setWithinTurnSortDirection] = useState('desc')
+      const [historyFilters, setHistoryFilters] = useState({ query: '', fromSeq: '', toSeq: '', fromTurn: '', toTurn: '', severities: '', statuses: '', triggers: '', models: '', layers: '', turnOrder: 'desc', withinTurnOrder: 'desc' })
       const [appliedHistoryFilters, setAppliedHistoryFilters] = useState({})
       const [historyPage, setHistoryPage] = useState({ items: [], nextCursor: null, total: 0, revision: null, loading: false, legacy: false, source: 'history', drilldown: null })
       const [historyUpdateAvailable, setHistoryUpdateAvailable] = useState(null)
@@ -1842,6 +1865,7 @@ window.__ModuleLoader__.load({
       const pendingLatestLanding = useRef(true)
       const pendingScrollRestore = useRef(null)
       const historyFilterRequestSerial = useRef(0)
+      const activeHistoryFilterSignature = useRef(null)
       const timelineRequestGeneration = useRef(0)
       const timelineViewIdentity = useRef(null)
       const [compareLeftId, setCompareLeftId] = useState('')
@@ -2140,15 +2164,25 @@ window.__ModuleLoader__.load({
         if (numericRevision(page.revision) !== null) appliedRevisions.current.history = numericRevision(page.revision)
       }, [])
 
-      const applyHistoryFilter = useCallback(async (nextFilters = historyFilters) => {
+      const applyHistoryFilter = useCallback(async (nextFilters = historyFilters, { forceReload = false } = {}) => {
         const filters = serializeHistoryFilters(nextFilters)
-        if (JSON.stringify(filters) !== JSON.stringify(appliedHistoryFilters)) invalidateResearchSummary()
+        const filterSignature = JSON.stringify(filters)
+        const filtersChanged = filterSignature !== JSON.stringify(appliedHistoryFilters)
+        setTurnSortDirection(nextFilters.turnOrder === 'asc' ? 'asc' : 'desc')
+        setWithinTurnSortDirection(nextFilters.withinTurnOrder === 'asc' ? 'asc' : 'desc')
+        if (filtersChanged) invalidateResearchSummary()
+        const activeFilterSignature = activeHistoryFilterSignature.current
+        if (!forceReload && (activeFilterSignature === filterSignature || (!filtersChanged && activeFilterSignature === null))) {
+          setVisibleCount(80)
+          return
+        }
         if (!supportsHistoryPaging) {
           setAppliedHistoryFilters(filters)
           setVisibleCount(80)
           return
         }
         const requestId = ++historyFilterRequestSerial.current
+        activeHistoryFilterSignature.current = filterSignature
         timelineRequestGeneration.current += 1
         const id = beginOperation('history-filter')
         setHistoryPage(current => ({ ...current, loading: true }))
@@ -2160,6 +2194,7 @@ window.__ModuleLoader__.load({
           }
           setAppliedHistoryFilters(filters)
           replacePagedHistory(page)
+          activeHistoryFilterSignature.current = null
           timelineScrollRef.current?.scrollTo?.({ top: 0 })
           finishOperation('history-filter', id, 'succeeded')
         } catch (reason) {
@@ -2168,6 +2203,7 @@ window.__ModuleLoader__.load({
             return
           }
           pendingScrollRestore.current = null
+          activeHistoryFilterSignature.current = null
           setHistoryPage(current => ({ ...current, loading: false }))
           setError(reason instanceof Error ? reason.message : String(reason))
           finishOperation('history-filter', id, 'failed')
@@ -2499,26 +2535,29 @@ window.__ModuleLoader__.load({
       const hiddenJobCount = items.filter(item => historyLayer(item) === 'job').length
       const hiddenSemanticVersionCount = reviewItemsWithVersions.length - reviewItems.length
       const visibleItems = supportsHistoryPaging ? reviewItems : reviewItems.slice(Math.max(0, reviewItems.length - visibleCount))
-      const timelineDisplayItems = useMemo(() => sortTimelineForDisplay(visibleItems), [visibleItems])
-      const latestDisplayTurn = timelineTurn(timelineDisplayItems[0])
-      const latestTurnItems = latestDisplayTurn === null ? timelineDisplayItems.slice(0, 1) : timelineDisplayItems.filter(item => timelineTurn(item) === latestDisplayTurn)
-      const latestTurnSummary = latestTurnItems.find(item => item.layer === 'programmatic')
-      const latestSemantic = [...latestTurnItems].reverse().find(item => item.layer === 'semantic')
+      const timelineDisplayItems = useMemo(() => sortTimelineForDisplay(visibleItems, turnSortDirection, withinTurnSortDirection), [turnSortDirection, visibleItems, withinTurnSortDirection])
+      const latestFirstItems = useMemo(() => sortTimelineForDisplay(visibleItems, 'desc', 'desc'), [visibleItems])
+      const latestDisplayTurn = timelineTurn(latestFirstItems[0])
+      const latestTurnItems = latestDisplayTurn === null ? latestFirstItems.slice(0, 1) : latestFirstItems.filter(item => timelineTurn(item) === latestDisplayTurn)
+      const originalTurnOrder = sortTimelineForDisplay(latestTurnItems, 'asc', 'asc')
+      const latestTurnSummary = originalTurnOrder.find(item => item.layer === 'programmatic')
+      const latestSemantic = [...originalTurnOrder].reverse().find(item => item.layer === 'semantic')
       const latestTimelineKey = latestTurnItems.length ? historyItemKey(latestSemantic || latestTurnSummary || latestTurnItems[0]) : null
       const latestLandingKey = latestTurnItems.length ? historyItemKey(latestTurnSummary || latestTurnItems[0]) : null
+      const latestRecordKey = latestFirstItems.length ? historyItemKey(latestFirstItems[0]) : null
       const liveVisible = (liveItems || []).filter(item => item.state === 'open' || item.state === 'finalizing')
       const openTurn = data?.coverage?.openTurn ?? null
       const provisionalGroups = useMemo(() => {
         const groups = new Map()
-        for (const item of visibleItems) {
+        for (const item of timelineDisplayItems) {
           if (historyLayer(item) !== 'semantic' || item.coverageRole !== 'provisional') continue
-          const turn = item.toTurn ?? item.fromTurn
-          if (!Number.isSafeInteger(turn)) continue
+          const turn = timelineTurn(item)
+          if (turn === null) continue
           if (!groups.has(turn)) groups.set(turn, [])
           groups.get(turn).push(item)
         }
         return groups
-      }, [visibleItems])
+      }, [timelineDisplayItems])
       useEffect(() => {
         if (state !== 'ready' || mode !== 'review' || !pendingLatestLanding.current) return
         scrollToLatest()
@@ -3196,7 +3235,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'tiPanelHeader' },
                     h('div', null,
                       h('h2', { className: 'tiPanelTitle' }, '可追溯分析时间线'),
-                      h('div', { className: 'tiPanelMeta' }, `当前显示 ${formatNumber(visibleItems.length)} 条分析记录${hiddenSemanticVersionCount ? ` · ${formatNumber(hiddenSemanticVersionCount)} 个旧模型结果已收起` : ''}${hiddenJobCount ? ` · ${formatNumber(hiddenJobCount)} 条后台任务已并入对应分析` : ''} · 最新 Turn 在前，Turn 内按 Seq 正序 · ${Intl.DateTimeFormat().resolvedOptions().timeZone || '本地时区'}`),
+                      h('div', { className: 'tiPanelMeta' }, `当前显示 ${formatNumber(visibleItems.length)} 条分析记录${hiddenSemanticVersionCount ? ` · ${formatNumber(hiddenSemanticVersionCount)} 个旧模型结果已收起` : ''}${hiddenJobCount ? ` · ${formatNumber(hiddenJobCount)} 条后台任务已并入对应分析` : ''} · Turn ${turnSortDirection === 'desc' ? '倒序' : '正序'} · Turn 内${withinTurnSortDirection === 'desc' ? '倒序' : '正序'} · ${Intl.DateTimeFormat().resolvedOptions().timeZone || '本地时区'}`),
                     ),
                     h('div', { className: 'tiTimelineHeaderActions' },
                       h('button', { className: 'tiButton tiButton--quiet', type: 'button', onClick: scrollToLatest }, liveVisible.length ? '回到进行中' : '回到最新'),
@@ -3227,9 +3266,11 @@ window.__ModuleLoader__.load({
                         h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '触发方式'), h('select', { className: 'tiSelect', value: historyFilters.triggers, onChange: event => setHistoryFilters(current => ({ ...current, triggers: event.target.value })) }, h('option', { value: '' }, '全部'), h('option', { value: 'high-severity' }, '高风险即时触发'), h('option', { value: 'terminal-turn' }, '异常结束触发'), h('option', { value: 'turn-threshold' }, '累计 Turn 触发'), h('option', { value: 'event-threshold' }, '事件量触发'), h('option', { value: 'input-threshold' }, '输入上限保护'), h('option', { value: 'quiet-period' }, '静默期触发'), h('option', { value: 'manual-segment' }, '手动分析'), h('option', { value: 'turn-end' }, 'Turn 结束'))),
                         h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '模型'), h('input', { className: 'tiInput', value: historyFilters.models, onChange: event => setHistoryFilters(current => ({ ...current, models: event.target.value })), placeholder: '模型名称，例如 gemini-3.7-flash-high' })),
                         h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '分析类型'), h('select', { className: 'tiSelect', value: historyFilters.layers, onChange: event => { setHistoryFilters(current => ({ ...current, layers: event.target.value })); setFilter(event.target.value || 'all') } }, h('option', { value: '' }, '全部'), h('option', { value: 'programmatic' }, '规则分析'), h('option', { value: 'semantic' }, '模型分析'))),
+                        h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, 'Turn 顺序'), h('select', { className: 'tiSelect', value: historyFilters.turnOrder, onChange: event => setHistoryFilters(current => ({ ...current, turnOrder: event.target.value })) }, h('option', { value: 'desc' }, '倒序'), h('option', { value: 'asc' }, '正序'))),
+                        h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, 'Turn 内顺序'), h('select', { className: 'tiSelect', value: historyFilters.withinTurnOrder, onChange: event => setHistoryFilters(current => ({ ...current, withinTurnOrder: event.target.value })) }, h('option', { value: 'desc' }, '倒序'), h('option', { value: 'asc' }, '正序'))),
                         h('div', { className: 'tiFilterActions' },
                           h('button', { className: 'tiButton tiButton--primary', type: 'button', disabled: operationRunning('history-filter'), onClick: () => applyHistoryFilter() }, operationRunning('history-filter') ? '筛选中…' : '应用筛选'),
-                          h('button', { className: 'tiButton', type: 'button', onClick: () => { const empty = { query: '', fromSeq: '', toSeq: '', fromTurn: '', toTurn: '', severities: '', statuses: '', triggers: '', models: '', layers: '' }; setHistoryFilters(empty); setFilter('all'); applyHistoryFilter(empty) } }, '清除'),
+                          h('button', { className: 'tiButton', type: 'button', onClick: () => { const empty = { query: '', fromSeq: '', toSeq: '', fromTurn: '', toTurn: '', severities: '', statuses: '', triggers: '', models: '', layers: '', turnOrder: 'desc', withinTurnOrder: 'desc' }; setHistoryFilters(empty); setFilter('all'); applyHistoryFilter(empty) } }, '清除'),
                         ),
                       ),
                     ),
@@ -3237,7 +3278,7 @@ window.__ModuleLoader__.load({
                 ),
                 historyUpdateAvailable ? h('div', { className: 'tiNotice tiNotice--warning', role: 'status' },
                   `${historyUpdateAvailable.reason}；为保持当前滚动与展开状态，页面没有自动替换。`,
-                  h('button', { className: 'tiButton', type: 'button', disabled: operationRunning('history-filter'), onClick: () => applyHistoryFilter(historyFilters) }, '刷新当前筛选结果'),
+                  h('button', { className: 'tiButton', type: 'button', disabled: operationRunning('history-filter'), onClick: () => applyHistoryFilter(historyFilters, { forceReload: true }) }, '刷新当前筛选结果'),
                 ) : null,
                 liveVisible.length ? h('div', { className: 'tiLiveSection', 'aria-label': '实时规则分析', ref: liveSectionRef },
                   ...liveVisible.map(item => h(LiveEntry, { item, provisional: liveProvisional, key: item.id })),
@@ -3247,16 +3288,21 @@ window.__ModuleLoader__.load({
                     const renderedGroups = new Set()
                     return timelineDisplayItems.map(item => {
                       const itemKey = historyItemKey(item)
+                      let renderKey = itemKey
+                      let containsLatestRecord = itemKey === latestRecordKey
                       let row = null
                       if (item.referenceOnly) {
                         row = h(ResearchReferenceEntry, { item, onEvidence: openEvidence })
                       }
-                      else if (item.coverageRole === 'provisional' && Number.isSafeInteger(item.toTurn ?? item.fromTurn)) {
-                        const turn = item.toTurn ?? item.fromTurn
+                      else if (item.coverageRole === 'provisional' && timelineTurn(item) !== null) {
+                        const turn = timelineTurn(item)
                         if (!provisionalGroups.has(turn)) return null
                         if (renderedGroups.has(turn)) return null
                         renderedGroups.add(turn)
-                        row = h(ProvisionalGroupEntry, { turn, items: provisionalGroups.get(turn), open: turn === openTurn, onEvidence: openEvidence })
+                        const groupItems = provisionalGroups.get(turn)
+                        renderKey = `provisional:${turn}`
+                        containsLatestRecord = groupItems.some(member => historyItemKey(member) === latestRecordKey)
+                        row = h(ProvisionalGroupEntry, { turn, items: groupItems, open: turn === openTurn, onEvidence: openEvidence })
                       }
                       else if (item.layer === 'programmatic') {
                         const hasFindings = Boolean(item.report?.findings?.length)
@@ -3306,8 +3352,8 @@ window.__ModuleLoader__.load({
                         row = h(SemanticEntry, { item, onSelect: selectItem, onEvidence: openEvidence, onCompare: supportsCompare ? selectCompareRun : null, compareSelected: item.id === compareLeftId || item.id === compareRightId, compact: itemKey !== latestTimelineKey })
                       }
                       else row = h(GenericHistoryEntry, { item })
-                      return h(React.Fragment, { key: itemKey },
-                        itemKey === latestLandingKey ? h('div', { className: 'tiLatestAnchor', ref: timelineLatestRef, 'aria-hidden': 'true' }) : null,
+                      return h(React.Fragment, { key: renderKey },
+                        containsLatestRecord ? h('div', { className: 'tiLatestAnchor', ref: timelineLatestRef, 'aria-hidden': 'true' }) : null,
                         row,
                       )
                     }).filter(Boolean)

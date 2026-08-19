@@ -610,16 +610,19 @@ test('a slow evidence response cannot overwrite a newer drawer selection', async
   await new Promise(resolve => setImmediate(resolve))
   const timeline = harness.render(registration.component, props)
   const semanticEntries = findTreeNodes(timeline, node => typeof node.type === 'function' && node.type.name === 'SemanticEntry')
-  const evidenceButtons = semanticEntries.map(entry => findTreeNodes(entry.type(entry.props), node => node.type === 'button' && treeText(node).startsWith('查看证据'))[0])
-  assert.equal(evidenceButtons.length, 2)
-  evidenceButtons[0].props.onClick()
+  const evidenceButtons = new Map(semanticEntries.map(entry => [
+    entry.props.item.id,
+    findTreeNodes(entry.type(entry.props), node => node.type === 'button' && treeText(node).startsWith('查看证据'))[0],
+  ]))
+  assert.equal(evidenceButtons.size, 2)
+  evidenceButtons.get('run-a').props.onClick()
   let drawer = harness.render(registration.component, props)
   let drawerNode = findTreeNodes(drawer, node => typeof node.type === 'function' && node.type.name === 'EvidenceDrawer')[0]
   let renderedDrawer = drawerNode.type(drawerNode.props)
   let rawButton = findTreeNodes(renderedDrawer, node => node.type === 'button' && treeText(node) === '查看原文')[0]
   const slowRequest = rawButton.props.onClick()
   drawerNode.props.onClose()
-  evidenceButtons[1].props.onClick()
+  evidenceButtons.get('run-b').props.onClick()
   drawer = harness.render(registration.component, props)
   drawerNode = findTreeNodes(drawer, node => typeof node.type === 'function' && node.type.name === 'EvidenceDrawer')[0]
   renderedDrawer = drawerNode.type(drawerNode.props)
@@ -980,7 +983,7 @@ test('an older paged run remains selectable after latest comparison candidates l
   assert.deepEqual(Array.from(compareView.props.runs, item => item.id).sort(), ['latest-candidate', 'older-paged-run'])
 })
 
-test('timeline-first UI lands on the latest Turn summary, keeps error squares visible, and limits comparison B to the selected range', async () => {
+test('timeline-first UI lands on the true latest record, keeps error squares visible, and limits comparison B to the selected range', async () => {
   const harness = interactiveReactHarness()
   const plugin = await loadBundle(harness.react)
   let registration
@@ -1009,15 +1012,15 @@ test('timeline-first UI lands on the latest Turn summary, keeps error squares vi
   let tree = harness.render(registration.component, props)
   const semanticEntries = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'SemanticEntry')
   assert.deepEqual(semanticEntries.map(node => [node.props.item.id, node.props.compact]), [
-    ['latest-same-range', true], ['different-range', false],
+    ['different-range', false], ['latest-same-range', true],
   ])
   const programmaticEntry = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'ProgrammaticEntry')[0]
   assert.equal(programmaticEntry.props.compact, false)
   assert.match(treeText(programmaticEntry.type(programmaticEntry.props)), /高 · 重复失败/)
   const landingFragment = findTreeNodes(tree, node => node.type === harness.react.Fragment
     && node.children?.some(child => child?.props?.className === 'tiLatestAnchor'))[0]
-  assert.equal(landingFragment.children[1].type.name, 'ProgrammaticEntry')
-  assert.equal(landingFragment.children[1].props.item.id, 'latest-turn-checkpoint')
+  assert.equal(landingFragment.children[1].type.name, 'SemanticEntry')
+  assert.equal(landingFragment.children[1].props.item.id, 'different-range')
   const statusOverview = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'StatusOverview')[0]
   const statusPanel = statusOverview.type(statusOverview.props)
   assert.equal(statusPanel.type, 'details')
@@ -1351,6 +1354,54 @@ test('a slow earlier-page request cannot merge into a newer filter result', asyn
   assert.deepEqual(entries.map(entry => entry.props.item.id), ['filtered-new'])
 })
 
+test('sorting during an in-flight earlier-page load stays local and applies after the page merges', async () => {
+  const harness = interactiveReactHarness()
+  const plugin = await loadBundle(harness.react)
+  let registration
+  plugin.apply({
+    effect(callback) { return callback() }, connection: { rpc: { async call() { return { ok: true, value: {} } } } }, sessions: { binding() { return { session: {} } } },
+    slots: { inject(_name, callback) { callback() }, register(options, component) { registration = { options, component }; return () => {} } },
+  })
+  let resolveEarlierPage
+  const earlierPage = new Promise(resolve => { resolveEarlierPage = resolve })
+  const pageCalls = []
+  const item = (id, turn, seq) => ({ id, historyKind: 'semantic', status: 'succeeded', fromTurn: turn, toTurn: turn, fromSeq: seq, toSeq: seq, route: { provider: 'p', model: id }, output: { verdict: id, evidenceRefs: [] } })
+  const api = {
+    async readCapabilities() { return { endpoints: ['insight/bootstrap', 'history/page'] } },
+    async readBootstrap() {
+      const value = boundedBootstrap([item('t2-s2', 2, 2)])
+      value.history = { items: [item('t2-s2', 2, 2)], total: 2, revision: 1, nextCursor: 'earlier' }
+      return value
+    },
+    async readHistoryPage(request) { pageCalls.push(request); return earlierPage },
+  }
+  const props = { useSession: () => ({ nodes: [{ seq: 2 }] }), api, sessionId: 'sort-during-history-more' }
+  harness.render(registration.component, props)
+  await new Promise(resolve => setImmediate(resolve))
+  let tree = harness.render(registration.component, props)
+  const moreRequest = findTreeNodes(tree, node => node.type === 'button' && treeText(node).startsWith('加载更早记录'))[0].props.onClick()
+  tree = harness.render(registration.component, props)
+  const selectInLabel = label => {
+    const field = findTreeNodes(tree, node => node.type === 'label' && treeText(node).startsWith(label))[0]
+    return findTreeNodes(field, node => node.type === 'select')[0]
+  }
+  selectInLabel('Turn 顺序').props.onChange({ target: { value: 'asc' } })
+  tree = harness.render(registration.component, props)
+  const withinField = findTreeNodes(tree, node => node.type === 'label' && treeText(node).startsWith('Turn 内顺序'))[0]
+  findTreeNodes(withinField, node => node.type === 'select')[0].props.onChange({ target: { value: 'asc' } })
+  tree = harness.render(registration.component, props)
+  await findTreeNodes(tree, node => node.type === 'button' && treeText(node) === '应用筛选')[0].props.onClick()
+  assert.equal(pageCalls.length, 1, 'sorting does not start a second history page request while load-more is pending')
+  assert.equal(pageCalls[0].cursor, 'earlier')
+
+  resolveEarlierPage({ items: [item('t1-s1', 1, 1)], total: 2, revision: 2, nextCursor: null })
+  await moreRequest
+  tree = harness.render(registration.component, props)
+  const entries = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'SemanticEntry')
+  assert.deepEqual(entries.map(entry => entry.props.item.id), ['t1-s1', 't2-s2'])
+  assert.match(treeText(tree), /Turn 正序 · Turn 内正序/)
+})
+
 test('a slow delta for an old filter cannot contaminate a newer filter page', async () => {
   let statusTick
   const harness = interactiveReactHarness({ runStatusEffects: true })
@@ -1597,6 +1648,11 @@ test('bundle implements open-turn live cards, provisional folding, and 4s live p
   assert.match(source, /setInterval\(\(\) => pollStatus\(\), supportsStatus \? statusPollDelay : 30_000\)/)
   assert.match(source, /maxCallsPerTurn: Number\(provMaxCallsPerTurn\)/)
   assert.match(source, /允许开放 Turn 的阶段分析/)
+  assert.match(source, /const \[turnSortDirection, setTurnSortDirection\] = useState\('desc'\)/)
+  assert.match(source, /const \[withinTurnSortDirection, setWithinTurnSortDirection\] = useState\('desc'\)/)
+  assert.match(source, /sortTimelineForDisplay\(visibleItems, turnSortDirection, withinTurnSortDirection\)/)
+  assert.match(source, /Turn 顺序/)
+  assert.match(source, /Turn 内顺序/)
 })
 
 test('open-turn live card renders above the timeline and settled provisional runs fold into a group', async () => {
@@ -1621,10 +1677,12 @@ test('open-turn live card renders above the timeline and settled provisional run
         settingsScope: { global: {}, effective: {} },
         history: {
           items: [
+            { id: 'cp-0', historyKind: 'programmatic', fromSeq: 0, toSeq: 0, fromTurn: 0, toTurn: 0, report: { status: { code: 'complete', label: '已完成' }, summary: '更早检查点' } },
             { id: 'cp-1', historyKind: 'programmatic', fromSeq: 0, toSeq: 9, fromTurn: 1, toTurn: 1, report: { status: { code: 'complete', label: '已完成' }, summary: '最终检查点' } },
-            { id: 'run-prov-1', historyKind: 'semantic', coverageRole: 'provisional', status: 'succeeded', fromSeq: 0, toSeq: 3, fromTurn: 1, toTurn: 1, route: { provider: 'p', model: 'm' }, trigger: 'provisional-failure-pattern', output: { verdict: '阶段结论', narrative: '阶段叙述' } },
+            { id: 'run-prov-1', historyKind: 'semantic', coverageRole: 'provisional', status: 'succeeded', fromSeq: 0, toSeq: 3, fromTurn: 1, toTurn: 1, route: { provider: 'p', model: 'm' }, trigger: 'provisional-failure-pattern', output: { verdict: '阶段结论一', narrative: '阶段叙述一' } },
+            { id: 'run-prov-2', historyKind: 'semantic', coverageRole: 'provisional', status: 'succeeded', fromSeq: 4, toSeq: 6, fromTurn: 1, toTurn: 1, route: { provider: 'p', model: 'm' }, trigger: 'provisional-quiet', output: { verdict: '阶段结论二', narrative: '阶段叙述二' } },
           ],
-          total: 2, revision: 2, nextCursor: null,
+          total: 4, revision: 2, nextCursor: null,
         },
         annotations: { total: 0, activeCount: 0, revision: 0 },
         turns: [{ turn: 1, fromSeq: 0, toSeq: 9 }],
@@ -1649,7 +1707,7 @@ test('open-turn live card renders above the timeline and settled provisional run
   await new Promise(resolve => setImmediate(resolve))
   const tree = harness.render(registration.component, props)
   const text = treeText(tree)
-  assert.match(text, /当前显示 2 条分析记录/)
+  assert.match(text, /当前显示 4 条分析记录/)
   // The harness does not render function components; invoke the live entry
   // and the provisional group manually, like the other view tests.
   const liveSection = findTreeNodes(tree, node => node.props?.className === 'tiLiveSection')[0]
@@ -1666,11 +1724,94 @@ test('open-turn live card renders above the timeline and settled provisional run
   assert.ok(groupNode, 'settled provisional runs fold into a group')
   const groupText = treeText(groupNode.type(groupNode.props))
   assert.match(groupText, /阶段分析 · 暂定/)
-  assert.match(groupText, /Turn 1 · 共 1 次/)
-  assert.match(groupText, /最新：阶段结论/)
-  assert.match(groupText, /阶段叙述/)
-  const finalNode = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'ProgrammaticEntry')[0]
-  assert.ok(finalNode, 'final programmatic checkpoint still renders standalone')
+  assert.match(groupText, /Turn 1 · 共 2 次/)
+  assert.match(groupText, /最新：阶段结论二/)
+  assert.match(groupText, /阶段叙述一/)
+  assert.deepEqual(Array.from(groupNode.props.items, item => item.id), ['run-prov-2', 'run-prov-1'], 'descending direction applies inside the provisional group')
+  const displayNodes = findTreeNodes(tree, node => typeof node.type === 'function' && ['ProgrammaticEntry', 'ProvisionalGroupEntry'].includes(node.type.name))
+  const describe = node => node.type.name === 'ProvisionalGroupEntry' ? `group:${node.props.turn}` : node.props.item.id
+  assert.deepEqual(displayNodes.map(describe), ['group:1', 'cp-1', 'cp-0'], 'default descending order applies to Turn and Seq together')
+  const descendingGroupFragment = findTreeNodes(tree, node => node.type === harness.react.Fragment && node.children?.some(child => child?.type?.name === 'ProvisionalGroupEntry'))[0]
+  assert.equal(descendingGroupFragment.props.key, 'provisional:1')
+  assert.ok(descendingGroupFragment.children.some(child => child?.props?.className === 'tiLatestAnchor'), 'latest anchor is attached to the atomic provisional group')
+  const selectInLabel = (currentTree, label) => {
+    const field = findTreeNodes(currentTree, node => node.type === 'label' && treeText(node).startsWith(label))[0]
+    return findTreeNodes(field, node => node.type === 'select')[0]
+  }
+  const applySort = async (currentTree, field, value) => {
+    selectInLabel(currentTree, field).props.onChange({ target: { value } })
+    const draftTree = harness.render(registration.component, props)
+    const applyButton = findTreeNodes(draftTree, node => node.type === 'button' && treeText(node) === '应用筛选')[0]
+    await applyButton.props.onClick()
+    return harness.render(registration.component, props)
+  }
+  assert.equal(findTreeNodes(tree, node => node.type === 'button' && /Turn.*序/u.test(treeText(node))).length, 0, 'sorting controls stay out of the timeline header')
+
+  const turnAscendingTree = await applySort(tree, 'Turn 顺序', 'asc')
+  const turnAscendingNodes = findTreeNodes(turnAscendingTree, node => typeof node.type === 'function' && ['ProgrammaticEntry', 'ProvisionalGroupEntry'].includes(node.type.name))
+  assert.deepEqual(turnAscendingNodes.map(describe), ['cp-0', 'group:1', 'cp-1'], 'changing Turn order does not change within-Turn order')
+  assert.deepEqual(Array.from(turnAscendingNodes.find(node => node.type.name === 'ProvisionalGroupEntry').props.items, item => item.id), ['run-prov-2', 'run-prov-1'])
+
+  const bothAscendingTree = await applySort(turnAscendingTree, 'Turn 内顺序', 'asc')
+  const bothAscendingNodes = findTreeNodes(bothAscendingTree, node => typeof node.type === 'function' && ['ProgrammaticEntry', 'ProvisionalGroupEntry'].includes(node.type.name))
+  assert.deepEqual(bothAscendingNodes.map(describe), ['cp-0', 'group:1', 'cp-1'])
+  assert.deepEqual(Array.from(bothAscendingNodes.find(node => node.type.name === 'ProvisionalGroupEntry').props.items, item => item.id), ['run-prov-1', 'run-prov-2'], 'changing Turn-internal order reverses provisional members')
+
+  const turnDescendingWithinAscendingTree = await applySort(bothAscendingTree, 'Turn 顺序', 'desc')
+  const mixedNodes = findTreeNodes(turnDescendingWithinAscendingTree, node => typeof node.type === 'function' && ['ProgrammaticEntry', 'ProvisionalGroupEntry'].includes(node.type.name))
+  assert.deepEqual(mixedNodes.map(describe), ['group:1', 'cp-1', 'cp-0'])
+  assert.deepEqual(Array.from(mixedNodes.find(node => node.type.name === 'ProvisionalGroupEntry').props.items, item => item.id), ['run-prov-1', 'run-prov-2'])
+
+  for (const currentTree of [turnAscendingTree, bothAscendingTree, turnDescendingWithinAscendingTree]) {
+    const groupFragment = findTreeNodes(currentTree, node => node.type === harness.react.Fragment && node.children?.some(child => child?.type?.name === 'ProvisionalGroupEntry'))[0]
+    assert.equal(groupFragment.props.key, 'provisional:1', 'the group key stays stable across all direction combinations')
+    assert.ok(groupFragment.children.some(child => child?.props?.className === 'tiLatestAnchor'), 'the true latest anchor remains rendered across all direction combinations')
+    assert.ok(findTreeNodes(currentTree, node => node.props?.className === 'tiLiveSection')[0], 'the running section remains pinned above the sorted timeline')
+  }
   const semanticNodes = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'SemanticEntry')
   assert.equal(semanticNodes.length, 0, 'the provisional run is folded, not rendered as a standalone entry')
+})
+
+test('timeline sorter preserves unknown stability, valid fallbacks, layer order, and post-merge direction', async () => {
+  const source = await readFile(new URL('../src/client-template.js', import.meta.url), 'utf8')
+  const start = source.indexOf('function historyLayer')
+  const end = source.indexOf('function semanticVersionTime')
+  assert.ok(start >= 0 && end > start)
+  const context = { Date, Number, String }
+  vm.runInNewContext(`${source.slice(start, end)}\nglobalThis.__sort = sortTimelineForDisplay; globalThis.__turn = timelineTurn; globalThis.__time = timelineTime`, context)
+  const known = { id: 'known', historyKind: 'semantic', fromTurn: 1, toTurn: 1, fromSeq: 1, toSeq: 1, completedAt: '2026-08-19T01:00:00.000Z' }
+  const fallback = { id: 'fallback', historyKind: 'semantic', toTurn: 'invalid', fromTurn: 2, fromSeq: 2, toSeq: 2, createdAt: 'invalid', completedAt: '2026-08-19T02:00:00.000Z' }
+  const unknown = ['z', 'a', 'm'].map(id => ({ id, historyKind: 'semantic', toTurn: 'invalid', fromTurn: null, fromSeq: null, toSeq: null, createdAt: 'invalid' }))
+  assert.equal(context.__turn(fallback), 2)
+  assert.equal(context.__time(fallback), Date.parse(fallback.completedAt))
+  assert.deepEqual(Array.from(context.__sort([unknown[0], known, unknown[1], fallback, unknown[2]], 'desc', 'asc'), item => item.id), ['fallback', 'known', 'z', 'a', 'm'])
+  assert.deepEqual(Array.from(context.__sort([unknown[0], known, unknown[1], fallback, unknown[2]], 'asc', 'desc'), item => item.id), ['known', 'fallback', 'z', 'a', 'm'])
+
+  const shared = { fromTurn: 1, toTurn: 1, fromSeq: 5, toSeq: 5, completedAt: '2026-08-19T03:00:00.000Z' }
+  const semantic = { ...shared, id: 'semantic', historyKind: 'semantic' }
+  const programmatic = { ...shared, id: 'programmatic', historyKind: 'programmatic' }
+  for (const [turnDirection, withinDirection] of [['desc', 'desc'], ['desc', 'asc'], ['asc', 'desc'], ['asc', 'asc']]) {
+    assert.deepEqual(Array.from(context.__sort([semantic, programmatic], turnDirection, withinDirection), item => item.id), ['programmatic', 'semantic'])
+  }
+
+  const combinations = [
+    { id: 't1-s1', historyKind: 'semantic', fromTurn: 1, toTurn: 1, fromSeq: 1, toSeq: 1 },
+    { id: 't1-s2', historyKind: 'semantic', fromTurn: 1, toTurn: 1, fromSeq: 2, toSeq: 2 },
+    { id: 't2-s1', historyKind: 'semantic', fromTurn: 2, toTurn: 2, fromSeq: 1, toSeq: 1 },
+    { id: 't2-s2', historyKind: 'semantic', fromTurn: 2, toTurn: 2, fromSeq: 2, toSeq: 2 },
+  ]
+  assert.deepEqual(Array.from(context.__sort(combinations, 'desc', 'desc'), item => item.id), ['t2-s2', 't2-s1', 't1-s2', 't1-s1'])
+  assert.deepEqual(Array.from(context.__sort(combinations, 'desc', 'asc'), item => item.id), ['t2-s1', 't2-s2', 't1-s1', 't1-s2'])
+  assert.deepEqual(Array.from(context.__sort(combinations, 'asc', 'desc'), item => item.id), ['t1-s2', 't1-s1', 't2-s2', 't2-s1'])
+  assert.deepEqual(Array.from(context.__sort(combinations, 'asc', 'asc'), item => item.id), ['t1-s1', 't1-s2', 't2-s1', 't2-s2'])
+
+  const initial = [
+    { ...known, id: 'seq-10', fromSeq: 10, toSeq: 10 },
+    { ...known, id: 'seq-30', fromSeq: 30, toSeq: 30 },
+  ]
+  const merged = [...initial, { ...known, id: 'seq-20', fromSeq: 20, toSeq: 20 }]
+  const originalOrder = merged.map(item => item.id)
+  assert.deepEqual(Array.from(context.__sort(merged, 'asc', 'asc'), item => item.id), ['seq-10', 'seq-20', 'seq-30'])
+  assert.deepEqual(Array.from(context.__sort(merged, 'desc', 'desc'), item => item.id), ['seq-30', 'seq-20', 'seq-10'])
+  assert.deepEqual(merged.map(item => item.id), originalOrder, 'sorting never mutates merged history input')
 })

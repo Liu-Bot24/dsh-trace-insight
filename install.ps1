@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.1.0'
+$PluginVersion = '1.1.1'
 $DshVersion = '0.1.0-rc.7'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'

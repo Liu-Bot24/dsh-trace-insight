@@ -2,7 +2,7 @@
 set -euo pipefail
 PROFILE="${1:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE="$HERE/dsh-plugin-trace-insight-1.1.0.tgz"
+PACKAGE="$HERE/dsh-plugin-trace-insight-1.1.1.tgz"
 PATCH_CORE="$HERE/patches/shell-patch.mjs"
 NPX_FINDER="$HERE/scripts/find-npx-dsh.mjs"
 
