@@ -13,10 +13,19 @@ if { command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:3080 -sTCP:LISTEN >/dev/n
   echo "DSH is running. Stop it, then run this uninstaller again." >&2
   exit 1
 fi
-node "$HERE/patches/shell-patch.mjs" restore-active --json >/dev/null
-if ! command -v npx >/dev/null 2>&1; then
-  echo "npx is required." >&2
+if ! command -v dsh >/dev/null 2>&1; then
+  echo "A global DeepSeek Harness installation is required." >&2
   exit 1
 fi
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 plugin --profile "$PROFILE" remove dsh-plugin-trace-insight
+DSH_COMMAND="$(command -v dsh)"
+DSH_VERSION="$("$DSH_COMMAND" --version | tr -d '\r\n')"
+case "$DSH_VERSION" in
+  0.1.0-rc.7|0.1.0-rc.8) ;;
+  *)
+    echo "DeepSeek Harness 0.1.0-rc.7 or 0.1.0-rc.8 is required; found $DSH_VERSION." >&2
+    exit 1
+    ;;
+esac
+node "$HERE/patches/shell-patch.mjs" restore-active --dsh-root "$DSH_COMMAND" --json >/dev/null
+"$DSH_COMMAND" plugin --profile "$PROFILE" remove dsh-plugin-trace-insight
 echo "Trace Insight and the right-side inspector were removed. Restart DSH."

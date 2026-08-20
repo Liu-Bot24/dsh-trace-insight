@@ -10,11 +10,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.1.1'
-$DshVersion = '0.1.0-rc.7'
+$PluginVersion = '1.2.0'
+$SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8')
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
-$NpxFinder = Join-Path $Here 'scripts\find-npx-dsh.mjs'
 if ([string]::IsNullOrWhiteSpace($PackagePath)) {
   $PackagePath = Join-Path $Here "dsh-plugin-trace-insight-$PluginVersion.tgz"
 }
@@ -94,14 +93,14 @@ function Resolve-DshRunner {
     }
   }
 
-  $npx = Get-Command npx -ErrorAction SilentlyContinue
-  if ($null -eq $npx) {
-    throw '未找到 npx。请先安装 Node.js 22.19 或更高版本。'
+  $dsh = Get-Command dsh -ErrorAction SilentlyContinue
+  if ($null -eq $dsh) {
+    throw '未找到全局 dsh。请先全局安装受支持的 DeepSeek Harness，再运行本安装程序。'
   }
   return [pscustomobject]@{
-    FilePath = $npx.Source
-    Prefix = @('--yes', "@deepseek-ai/dsh@$DshVersion")
-    Display = "npx --yes @deepseek-ai/dsh@$DshVersion"
+    FilePath = $dsh.Source
+    Prefix = @()
+    Display = "$($dsh.Source)"
     WorkingDirectory = $null
   }
 }
@@ -185,14 +184,13 @@ if (-not (Test-Path -LiteralPath $PatchCore -PathType Leaf)) {
 }
 $versionOutput = Invoke-Dsh -Runner $runner -Arguments @('--version') -Capture
 $versionText = ($versionOutput -join ' ').Trim()
-if ($versionText -notmatch [regex]::Escape($DshVersion)) {
-  throw "当前 DSH 是 $versionText；需要 $DshVersion。"
+if ($SupportedDshVersions -notcontains $versionText) {
+  throw "当前 DSH 是 $versionText；支持的版本是 $($SupportedDshVersions -join '、')。"
 }
 
 if ([string]::IsNullOrWhiteSpace($DshRoot)) {
   if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
-    if (-not (Test-Path -LiteralPath $NpxFinder -PathType Leaf)) { throw "缺少 DSH 定位组件：$NpxFinder" }
-    $DshRoot = ((Invoke-Checked -FilePath $node.Source -Arguments @($NpxFinder, $DshVersion) -Capture) -join '').Trim()
+    $DshRoot = $runner.FilePath
   } else {
     throw '使用 -SourceRoot 时必须同时提供 -DshRoot。'
   }
@@ -226,7 +224,7 @@ try {
   $installError = $_
   try { Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'remove', 'dsh-plugin-trace-insight') } catch {}
   if ($patchWasOriginal) {
-    try { $null = Invoke-Checked -FilePath $node.Source -Arguments @($PatchCore, 'restore-active', '--json') -Capture } catch {}
+    try { $null = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'restore-active') + $patchRootArguments + @('--json')) -Capture } catch {}
   }
   throw $installError
 }

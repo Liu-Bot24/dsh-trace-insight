@@ -18,7 +18,7 @@ import {
 } from './model-analysis.mjs'
 import { readSessionObservation } from './session-observation.mjs'
 
-export const TRACE_INSIGHT_SERVICE_VERSION = '1.1.1'
+export const TRACE_INSIGHT_SERVICE_VERSION = '1.2.0'
 const MAX_DIAGNOSTICS = 100
 const RETRY_BASE_MS = 300_000
 const RETRY_MAX_MS = 3_600_000

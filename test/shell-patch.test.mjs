@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -188,6 +189,56 @@ test('an already patched install reconnects to its exact backup before uninstall
   }
 })
 
+test('an exact supported DSH upgrade clears a stale active backup only after seeing new originals', () => {
+  const subject = fixture()
+  try {
+    applyShellPatch({
+      dshRoot: subject.dshRoot,
+      manifest: subject.manifest,
+      backupRoot: subject.backupRoot,
+    })
+
+    const nextOriginals = {}
+    for (const [name, target] of FILES) {
+      const content = `next-original:${name}\n`
+      writeFileSync(join(subject.layoutRoot, target), content)
+      nextOriginals[name] = digest(content)
+    }
+    writeJson(join(subject.dshRoot, 'package.json'), { name: '@deepseek-ai/dsh', version: '0.1.0-test.2' })
+    writeJson(join(subject.webAppRoot, 'package.json'), {
+      name: '@deepseek-ai/dsh-web-app',
+      version: '0.1.0-test.2',
+      exports: { './package.json': './package.json' },
+    })
+    writeJson(join(subject.layoutRoot, 'package.json'), {
+      name: '@deepseek-ai/dsh-client-ui-layout',
+      version: '0.1.0-test.2',
+      exports: { './package.json': './package.json' },
+    })
+    subject.manifest.targets.push({
+      id: 'synthetic-target-2',
+      dshVersions: ['0.1.0-test.2'],
+      webAppVersions: ['0.1.0-test.2'],
+      layoutVersion: '0.1.0-test.2',
+      originalSha256: nextOriginals,
+    })
+
+    const result = restoreActiveShellPatch({
+      dshRoot: subject.dshRoot,
+      manifest: subject.manifest,
+      backupRoot: subject.backupRoot,
+    })
+    assert.equal(result.state, 'superseded-by-upgrade')
+    assert.equal(result.targetId, 'synthetic-target-2')
+    assert.equal(existsSync(join(subject.root, 'shell-patch-active.json')), false)
+    for (const [name, target] of FILES) {
+      assert.equal(sha256(join(subject.layoutRoot, target)), nextOriginals[name])
+    }
+  } finally {
+    subject.cleanup()
+  }
+})
+
 test('unknown or mixed target hashes are rejected before creating a backup', () => {
   const subject = fixture()
   try {
@@ -329,9 +380,26 @@ test('a mid-restore replacement failure returns every file to its patched state'
 
 test('shipped compatibility manifest matches every bundled payload', () => {
   const manifest = loadShellPatchManifest()
-  assert.deepEqual(manifest.targets.map(target => target.layoutVersion), ['0.1.0-rc.6', '0.1.0-rc.7'])
+  assert.deepEqual(manifest.targets.map(target => target.layoutVersion), ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8'])
+  const rc8 = manifest.targets.find(target => target.id === 'dsh-rc8-layout-rc8')
+  assert.deepEqual(rc8.dshVersions, ['0.1.0-rc.8'])
+  assert.deepEqual(rc8.webAppVersions, ['0.1.0-rc.8'])
+  assert.equal(rc8.originalSha256['client.js'], '16f001f89a9bc19c54cfa90e37cf52e191113af0abe5efd593e57d7ab30060ad')
   for (const file of manifest.files) {
     assert.equal(sha256(join(manifest.payloadRoot, file.payload)), file.patchedSha256)
+  }
+})
+
+test('an npm command shim resolves to the exact adjacent DSH package tree', () => {
+  const subject = fixture()
+  try {
+    const shim = join(subject.installRoot, process.platform === 'win32' ? 'dsh.cmd' : 'dsh')
+    writeFileSync(shim, '')
+    const result = inspectShellPatch({ dshRoot: shim, manifest: subject.manifest })
+    assert.equal(result.state, 'original')
+    assert.equal(result.dshRoot, realpathSync(subject.dshRoot))
+  } finally {
+    subject.cleanup()
   }
 })
 

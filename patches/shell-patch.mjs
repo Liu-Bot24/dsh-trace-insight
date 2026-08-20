@@ -56,6 +56,7 @@ function packageInfo(root, expectedName) {
 function packageRootFromCandidate(candidate) {
   if (!candidate) return undefined
   let start = resolve(candidate)
+  if (existsSync(start)) start = realpathSync(start)
   if (existsSync(start) && !statSync(start).isDirectory()) start = dirname(start)
 
   const directCandidates = [
@@ -619,9 +620,41 @@ export function restoreActiveShellPatch(options = {}) {
     || typeof state.dshRoot !== 'string') {
     throw new ShellPatchError(`不支持的 active shell patch state: ${path}`)
   }
+
+  const manifest = options.manifest ?? loadShellPatchManifest(options.manifestPath)
+  const dshRoot = options.dshRoot ?? state.dshRoot
+  const probe = resolveProbe({ dshRoot, manifest })
+  const versionChanged = state.versions
+    && (state.versions.dsh !== probe.versions.dsh
+      || state.versions.webApp !== probe.versions.webApp
+      || state.versions.layout !== probe.versions.layout)
+  if (versionChanged) {
+    const records = fileRecords(probe, manifest)
+    verifyPayloads(records)
+    const inspected = inspectRecords(records)
+    const currentState = stateOf(inspected)
+    if (currentState !== 'original') {
+      throw new ShellPatchError('DSH 已升级，但当前 shell 文件不是新版原始状态；拒绝清除旧备份指针。', {
+        previous: state.versions,
+        current: probe.versions,
+        state: currentState,
+      })
+    }
+    clearActiveState(state.backupDirectory, options)
+    return {
+      operation: 'restore-active',
+      state: 'superseded-by-upgrade',
+      targetId: probe.target.id,
+      dshRoot: probe.dsh.root,
+      layoutRoot: probe.layout.root,
+      versions: probe.versions,
+      backupDirectory: state.backupDirectory,
+    }
+  }
   return restoreShellPatch(state.backupDirectory, {
     ...options,
-    dshRoot: options.dshRoot ?? state.dshRoot,
+    manifest,
+    dshRoot,
   })
 }
 
@@ -661,6 +694,10 @@ function printResult(result, json) {
   }
   if (result.operation === 'restore-active' && result.state === 'not-installed') {
     process.stdout.write('没有需要恢复的右侧检查器安装。\n')
+    return
+  }
+  if (result.operation === 'restore-active' && result.state === 'superseded-by-upgrade') {
+    process.stdout.write('DSH 升级已经替换旧版 shell 文件；已清除旧补丁状态。\n')
     return
   }
   const versionText = `DSH ${result.versions.dsh} / web-app ${result.versions.webApp} / layout ${result.versions.layout}`

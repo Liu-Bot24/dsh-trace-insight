@@ -62,9 +62,9 @@ Compare accepts two successful analyses with the same range and input, then show
 
 ## Installation
 
-DeepSeek Harness `0.1.0-rc.7` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
+A global installation of DeepSeek Harness `0.1.0-rc.7` or `0.1.0-rc.8` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
 
-Download or clone this repository, then run the installer from the repository root. The installer prepares DSH, installs Trace Insight, and adds the right sidebar.
+Download or clone this repository, then run the installer from the repository root. The installer checks the current global DSH installation, installs Trace Insight, and adds the right sidebar.
 
 ### Windows
 
@@ -83,7 +83,7 @@ bash ./install.sh
 Start DSH after installation:
 
 ```shell
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 web
+dsh web
 ```
 
 Open any Session and select **Trace Insight** to open the sidebar.
@@ -177,13 +177,13 @@ Stop DSH completely, run the installer again, and start DSH. If the entry still 
 Windows PowerShell:
 
 ```powershell
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 --profile web --dump-config | Select-String "trace-insight"
+dsh --profile web --dump-config | Select-String "trace-insight"
 ```
 
 macOS or Linux:
 
 ```bash
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 --profile web --dump-config | grep "trace-insight"
+dsh --profile web --dump-config | grep "trace-insight"
 ```
 
 ### The page is waiting for a default model

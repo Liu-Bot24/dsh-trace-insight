@@ -60,6 +60,19 @@
         "stores.d.ts": "4577e8391513aec24705c4ebdc6531d5020e8a8d45c0347c35823a524ea3f084",
         "AppFrame.d.ts": "ef1cbcaf436971eb1fe5f4e24300072f80537343b38763a7a6be9861f5f3d7ff"
       }
+    },
+    {
+      "id": "dsh-rc8-layout-rc8",
+      "dshVersions": ["0.1.0-rc.8"],
+      "webAppVersions": ["0.1.0-rc.8"],
+      "layoutVersion": "0.1.0-rc.8",
+      "originalSha256": {
+        "client.js": "16f001f89a9bc19c54cfa90e37cf52e191113af0abe5efd593e57d7ab30060ad",
+        "index.d.ts": "a7f4afb8867746bbdd4b92a98263a16641d61d1f462a49251a462396610c8074",
+        "service.d.ts": "4feb499ba08d174bedf9f6266f86b444931e1e3d5bb1b79a34a8bca306be50cf",
+        "stores.d.ts": "4577e8391513aec24705c4ebdc6531d5020e8a8d45c0347c35823a524ea3f084",
+        "AppFrame.d.ts": "ef1cbcaf436971eb1fe5f4e24300072f80537343b38763a7a6be9861f5f3d7ff"
+      }
     }
   ]
 }

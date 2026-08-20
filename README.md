@@ -62,9 +62,9 @@ DSH 的对话或轨迹保留在左侧，Trace Insight 显示在可调整宽度�
 
 ## 安装
 
-需要 DeepSeek Harness `0.1.0-rc.7` 和 Node.js `22.19.0` 或更高版本。安装前请关闭正在运行的 DSH。
+需要全局安装 DeepSeek Harness `0.1.0-rc.7` 或 `0.1.0-rc.8`，并使用 Node.js `22.19.0` 或更高版本。安装前请关闭正在运行的 DSH。
 
-下载或克隆本仓库后，在仓库根目录执行对应的安装程序。安装程序会准备 DSH、安装 Trace Insight，并接入右侧栏。
+下载或克隆本仓库后，在仓库根目录执行对应的安装程序。安装程序会检查当前全局 DSH、安装 Trace Insight，并接入右侧栏。
 
 ### Windows
 
@@ -83,7 +83,7 @@ bash ./install.sh
 安装完成后启动 DSH：
 
 ```shell
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 web
+dsh web
 ```
 
 打开任意会话后，点击 **解读** 即可打开右侧栏。
@@ -177,13 +177,13 @@ bash ./uninstall.sh
 Windows PowerShell：
 
 ```powershell
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 --profile web --dump-config | Select-String "trace-insight"
+dsh --profile web --dump-config | Select-String "trace-insight"
 ```
 
 macOS 或 Linux：
 
 ```bash
-npx --yes @deepseek-ai/dsh@0.1.0-rc.7 --profile web --dump-config | grep "trace-insight"
+dsh --profile web --dump-config | grep "trace-insight"
 ```
 
 ### 显示“等待默认模型”
