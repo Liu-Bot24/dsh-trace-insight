@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-trace-insight",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A continuous, model-assisted semantic debugger for DeepSeek Harness trajectories.",
   "type": "module",
   "main": "./index.js",

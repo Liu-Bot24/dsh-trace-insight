@@ -487,6 +487,45 @@ test('a newer live Seq during bootstrap triggers programmatic sync without cance
   harness.unmount()
 })
 
+test('a stale analyzer checkpoint triggers programmatic sync without new Seq events', async () => {
+  const harness = dependencyLifecycleReactHarness()
+  const plugin = await loadBundle(harness.react)
+  let registration
+  plugin.apply({
+    effect(callback) { return callback() }, connection: { rpc: { async call() { return { ok: true, value: {} } } } }, sessions: { binding() { return { session: {} } } },
+    slots: { inject(_name, callback) { callback() }, register(options, component) { registration = { options, component }; return () => {} } },
+  })
+  const calls = []
+  const api = {
+    async readCapabilities() { calls.push('capabilities/read'); return { endpoints: ['insight/bootstrap', 'programmatic/sync'] } },
+    async readBootstrap() {
+      calls.push('insight/bootstrap')
+      return {
+        ...boundedBootstrap([]),
+        analyzerVersion: '0.3.4',
+        status: { coverage: { observedThroughSeq: 20, programmaticThroughSeq: 20 } },
+        latest: { programmatic: { id: 'programmatic-20', toSeq: 20, analyzerVersion: '0.3.3' } },
+      }
+    },
+    async syncProgrammatic() {
+      calls.push('programmatic/sync')
+      return {
+        ...boundedBootstrap([]),
+        analyzerVersion: '0.3.4',
+        status: { coverage: { observedThroughSeq: 20, programmaticThroughSeq: 20 } },
+        latest: { programmatic: { id: 'programmatic-20', toSeq: 20, analyzerVersion: '0.3.4' } },
+        reportSummary: { status: { code: 'complete', label: '已重新索引' }, summary: '旧分析器记录已更新。' },
+        report: { status: { code: 'complete', label: '已重新索引' }, summary: '旧分析器记录已更新。' },
+      }
+    },
+    async readInsight() { calls.push('insight/read'); throw new Error('must not enter legacy mode') },
+  }
+  harness.render(registration.component, { useSession: () => ({ nodes: [{ seq: 20 }] }), api, sessionId: 'stale-analyzer-session' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(calls, ['capabilities/read', 'insight/bootstrap', 'programmatic/sync'])
+  harness.unmount()
+})
+
 test('a delayed legacy read cannot overwrite a newer Session initialization', async () => {
   const harness = dependencyLifecycleReactHarness()
   const plugin = await loadBundle(harness.react)

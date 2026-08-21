@@ -18,7 +18,7 @@ import {
 } from './model-analysis.mjs'
 import { readSessionObservation } from './session-observation.mjs'
 
-export const TRACE_INSIGHT_SERVICE_VERSION = '1.2.0'
+export const TRACE_INSIGHT_SERVICE_VERSION = '1.2.1'
 const MAX_DIAGNOSTICS = 100
 const RETRY_BASE_MS = 300_000
 const RETRY_MAX_MS = 3_600_000
@@ -1367,6 +1367,7 @@ export class TraceInsightService {
     ]
     return {
       serviceVersion: TRACE_INSIGHT_SERVICE_VERSION,
+      analyzerVersion: ANALYZER_VERSION,
       endpoints,
       features: {
         settingsScopes: true,
@@ -2892,6 +2893,7 @@ export class TraceInsightService {
     const reportSummary = status.reportSummary ?? null
     return {
       serviceVersion: TRACE_INSIGHT_SERVICE_VERSION,
+      analyzerVersion: ANALYZER_VERSION,
       status,
       settingsScope: scoped,
       history: historyPage,

@@ -149,6 +149,25 @@ test('a clean, verified run does not invent high severity failures', () => {
   assert.equal(report.metrics.failedTools, 0)
 })
 
+test('successful cross-platform documentation does not become a capability failure', () => {
+  const nodes = Array.from({ length: 19 }, (_, index) => tool(
+    index + 1,
+    'read',
+    { path: `D:\\work\\repo\\file-${index + 1}.md` },
+    index === 18
+      ? 'README: Windows users run PowerShell; macOS users run bash in Terminal.'
+      : 'File read successfully.',
+  ))
+  const report = analyzeTrace({
+    snapshot: { sessionId: 'successful-platform-docs', running: true, hasMore: false, nodes, runningCalls: [] },
+    trace: { eventNodes: nodes, eventLocations: new Map(), requests: [], runningCalls: [] },
+  })
+
+  assert.equal(report.metrics.toolCalls, 19)
+  assert.equal(report.metrics.failedTools, 0)
+  assert.equal(report.findings.some(item => item.id === 'platform-capability-mismatch'), false)
+})
+
 test('successful file reads do not treat source-code error vocabulary as tool failures', () => {
   const nodes = [
     user(1, '审计源码并给出结论'),

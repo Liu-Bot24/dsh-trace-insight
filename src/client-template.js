@@ -1295,6 +1295,8 @@ function needsProgrammaticSync(value, currentSeq = -1) {
   const programmaticThrough = value?.status?.coverage?.programmaticThroughSeq ?? -1
   const latestProgrammatic = value?.latest?.programmatic
   const turnCount = value?.turnIndex?.total ?? value?.turns?.length ?? 0
+  if (latestProgrammatic && value?.analyzerVersion
+    && latestProgrammatic.analyzerVersion !== value.analyzerVersion) return true
   if (Number.isSafeInteger(currentSeq) && currentSeq >= 0 && (observedThrough < currentSeq || programmaticThrough < currentSeq)) return true
   return programmaticThrough < 0 && !latestProgrammatic && turnCount === 0
 }

@@ -4,7 +4,7 @@
  * can be unit-tested and reused by the client view.
  */
 
-export const ANALYZER_VERSION = '0.3.3'
+export const ANALYZER_VERSION = '0.3.4'
 
 const ERROR_PATTERNS = [
   ['FS_NOT_FOUND', /\b(?:FS_NOT_FOUND|ENOENT|file not found|path not found|no such file|找不到(?:文件|路径)|路径不存在|文件不存在)\b/i],
@@ -449,7 +449,11 @@ function urlToLocalFindings(calls) {
 }
 
 function platformMismatchFinding(calls) {
-  const matches = calls.filter(call => call.errorCode === 'PLATFORM_UNSUPPORTED' || call.errorCode === 'TOOL_UNAVAILABLE' || /(?:Windows|win32).*(?:bash|shell|terminal)|(?:bash|shell|terminal).*(?:Windows|win32)/i.test(call.resultText))
+  const matches = calls.filter(call => call.failed && (
+    call.errorCode === 'PLATFORM_UNSUPPORTED'
+    || call.errorCode === 'TOOL_UNAVAILABLE'
+    || /(?:Windows|win32).*(?:bash|shell|terminal)|(?:bash|shell|terminal).*(?:Windows|win32)/i.test(call.resultText)
+  ))
   if (!matches.length) return null
   const firstIndex = calls.indexOf(matches[0])
   return finding({
