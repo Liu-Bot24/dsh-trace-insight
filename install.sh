@@ -2,7 +2,7 @@
 set -euo pipefail
 PROFILE="${1:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE="$HERE/dsh-plugin-trace-insight-1.2.2.tgz"
+PACKAGE="$HERE/dsh-plugin-trace-insight-1.3.0.tgz"
 PATCH_CORE="$HERE/patches/shell-patch.mjs"
 
 if ! command -v node >/dev/null 2>&1; then
@@ -37,9 +37,9 @@ DSH_COMMAND="$(command -v dsh)"
 DSH=("$DSH_COMMAND")
 DSH_VERSION="$("${DSH[@]}" --version | tr -d '\r\n')"
 case "$DSH_VERSION" in
-  0.1.0-rc.7|0.1.0-rc.8) ;;
+  0.1.0-rc.7|0.1.0-rc.8|0.1.1-rc.1|0.1.1-rc.2) ;;
   *)
-    echo "DeepSeek Harness 0.1.0-rc.7 or 0.1.0-rc.8 is required; found $DSH_VERSION." >&2
+    echo "DeepSeek Harness 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, or 0.1.1-rc.2 is required; found $DSH_VERSION." >&2
     exit 1
     ;;
 esac

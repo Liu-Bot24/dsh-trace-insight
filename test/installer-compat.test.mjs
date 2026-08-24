@@ -9,18 +9,21 @@ const files = Object.fromEntries(
     .map(name => [name, readFileSync(new URL(name, root), 'utf8')]),
 )
 
-test('release metadata and installers agree on Trace Insight 1.2.2', () => {
-  assert.equal(packageJson.version, '1.2.2')
-  assert.equal(packageJson.dshCompatibility.version, '0.1.0-rc.7 || 0.1.0-rc.8')
-  assert.match(files['install.sh'], /dsh-plugin-trace-insight-1\.2\.2\.tgz/u)
-  assert.match(files['install.ps1'], /\$PluginVersion = '1\.2\.2'/u)
+test('release metadata and installers agree on Trace Insight 1.3.0', () => {
+  assert.equal(packageJson.version, '1.3.0')
+  assert.equal(packageJson.dshCompatibility.version, '0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2')
+  assert.match(files['install.sh'], /dsh-plugin-trace-insight-1\.3\.0\.tgz/u)
+  assert.match(files['install.ps1'], /\$PluginVersion = '1\.3\.0'/u)
 })
 
-test('public installers and uninstallers accept RC.7 and RC.8 but not RC.6', () => {
+test('public installers and uninstallers accept every supported DSH release but not unknown releases', () => {
   for (const name of ['install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1']) {
     assert.match(files[name], /0\.1\.0-rc\.7/u, `${name} must accept RC.7`)
     assert.match(files[name], /0\.1\.0-rc\.8/u, `${name} must accept RC.8`)
+    assert.match(files[name], /0\.1\.1-rc\.1/u, `${name} must accept 0.1.1 RC.1`)
+    assert.match(files[name], /0\.1\.1-rc\.2/u, `${name} must accept 0.1.1 RC.2`)
     assert.doesNotMatch(files[name], /0\.1\.0-rc\.6/u, `${name} must reject RC.6`)
+    assert.doesNotMatch(files[name], /0\.1\.1-rc\.3/u, `${name} must reject an unknown future release`)
   }
 })
 
@@ -35,10 +38,12 @@ test('public lifecycle uses one global DSH installation and never downloads a hi
   assert.match(files['uninstall.ps1'], /Get-Command dsh/u)
 })
 
-test('published instructions describe the same RC.7 and RC.8 requirement', () => {
+test('published instructions describe the same supported DSH releases', () => {
   for (const name of ['README.md', 'README.en.md']) {
     assert.match(files[name], /0\.1\.0-rc\.7/u)
     assert.match(files[name], /0\.1\.0-rc\.8/u)
+    assert.match(files[name], /0\.1\.1-rc\.1/u)
+    assert.match(files[name], /0\.1\.1-rc\.2/u)
     assert.doesNotMatch(files[name], /0\.1\.0-rc\.6/u)
   }
 })

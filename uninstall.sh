@@ -20,9 +20,9 @@ fi
 DSH_COMMAND="$(command -v dsh)"
 DSH_VERSION="$("$DSH_COMMAND" --version | tr -d '\r\n')"
 case "$DSH_VERSION" in
-  0.1.0-rc.7|0.1.0-rc.8) ;;
+  0.1.0-rc.7|0.1.0-rc.8|0.1.1-rc.1|0.1.1-rc.2) ;;
   *)
-    echo "DeepSeek Harness 0.1.0-rc.7 or 0.1.0-rc.8 is required; found $DSH_VERSION." >&2
+    echo "DeepSeek Harness 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, or 0.1.1-rc.2 is required; found $DSH_VERSION." >&2
     exit 1
     ;;
 esac

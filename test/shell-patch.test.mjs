@@ -380,11 +380,22 @@ test('a mid-restore replacement failure returns every file to its patched state'
 
 test('shipped compatibility manifest matches every bundled payload', () => {
   const manifest = loadShellPatchManifest()
-  assert.deepEqual(manifest.targets.map(target => target.layoutVersion), ['0.1.0-rc.6', '0.1.0-rc.7', '0.1.0-rc.8'])
+  assert.deepEqual(manifest.targets.map(target => target.layoutVersion), [
+    '0.1.0-rc.6',
+    '0.1.0-rc.7',
+    '0.1.0-rc.8',
+    '0.1.1-rc.1',
+    '0.1.1-rc.2',
+  ])
   const rc8 = manifest.targets.find(target => target.id === 'dsh-rc8-layout-rc8')
   assert.deepEqual(rc8.dshVersions, ['0.1.0-rc.8'])
   assert.deepEqual(rc8.webAppVersions, ['0.1.0-rc.8'])
   assert.equal(rc8.originalSha256['client.js'], '16f001f89a9bc19c54cfa90e37cf52e191113af0abe5efd593e57d7ab30060ad')
+  for (const id of ['dsh-0.1.1-rc1-layout-0.1.1-rc1', 'dsh-0.1.1-rc2-layout-0.1.1-rc2']) {
+    const target = manifest.targets.find(item => item.id === id)
+    assert.ok(target)
+    assert.deepEqual(target.originalSha256, rc8.originalSha256)
+  }
   for (const file of manifest.files) {
     assert.equal(sha256(join(manifest.payloadRoot, file.payload)), file.patchedSha256)
   }

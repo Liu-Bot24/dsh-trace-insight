@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
-$SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8')
+$SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2')
 
 function Test-DshRunning {
   try {

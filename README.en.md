@@ -62,7 +62,7 @@ Compare accepts two successful analyses with the same range and input, then show
 
 ## Installation
 
-A global installation of DeepSeek Harness `0.1.0-rc.7` or `0.1.0-rc.8` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
+A global installation of DeepSeek Harness `0.1.0-rc.7`, `0.1.0-rc.8`, `0.1.1-rc.1`, or `0.1.1-rc.2` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
 
 Download or clone this repository, then run the installer from the repository root. The installer checks the current global DSH installation, installs Trace Insight, and adds the right sidebar.
 

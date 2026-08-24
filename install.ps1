@@ -10,8 +10,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.2.2'
-$SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8')
+$PluginVersion = '1.3.0'
+$SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2')
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
 if ([string]::IsNullOrWhiteSpace($PackagePath)) {
