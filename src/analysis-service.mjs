@@ -18,7 +18,7 @@ import {
 } from './model-analysis.mjs'
 import { readSessionObservation } from './session-observation.mjs'
 
-export const TRACE_INSIGHT_SERVICE_VERSION = '1.2.1'
+export const TRACE_INSIGHT_SERVICE_VERSION = '1.2.2'
 const MAX_DIAGNOSTICS = 100
 const RETRY_BASE_MS = 300_000
 const RETRY_MAX_MS = 3_600_000
@@ -774,8 +774,12 @@ function comparisonRun(run) {
     generationConfiguration,
     generationConfigurationFingerprint: generationConfiguration ? stableInputHash(generationConfiguration) : null,
     verdict: run.output?.verdict ?? null,
+    narrative: run.output?.narrative ?? null,
+    assessment: run.output?.assessment ?? null,
     rootCauses: asArray(run.output?.rootCauses),
     nextSteps: asArray(run.output?.nextSteps),
+    lessons: asArray(run.output?.lessons),
+    evidenceRefs: asArray(run.output?.evidenceRefs),
     risk: run.output?.risk ?? null,
     confidence: run.output?.confidence ?? null,
     usage: run.usage ?? null,
@@ -877,6 +881,17 @@ function referenceFor(item, extra = {}) {
     toSeq: range.toSeq,
     ...extra,
   }
+}
+
+function preciseResearchReference(ref) {
+  if (Number.isSafeInteger(ref?.seq)) return true
+  if (ref?.kind === 'semantic') return Boolean(ref.id || ref.runId) && Number.isSafeInteger(ref.evidenceIndex)
+  if (ref?.kind === 'programmatic') {
+    return Boolean(ref.id || ref.checkpointId)
+      && Number.isSafeInteger(ref.findingIndex)
+      && Number.isSafeInteger(ref.evidenceIndex)
+  }
+  return false
 }
 
 function addBucket(map, key, label, ref, meta = {}) {
@@ -2696,8 +2711,9 @@ export class TraceInsightService {
     const semanticThroughSeq = history.semantic.coveredThroughSeq
     const nextTrigger = this.quietDueAt.get(sessionId) ?? history.semantic.retry?.notBefore ?? null
     const latestProgrammatic = latestByTime(history.programmatic?.checkpoints)
-    const latestSemanticSuccess = latestByTime(history.semantic?.runs, run => run.status === 'succeeded')
-    const latestSemanticFailure = latestByTime(history.semantic?.runs, run => ['failed', 'cancelled', 'interrupted'].includes(run.status))
+    const isFormalRun = run => !run.coverageRole || run.coverageRole === 'primary'
+    const latestSemanticSuccess = latestByTime(history.semantic?.runs, run => isFormalRun(run) && run.status === 'succeeded')
+    const latestSemanticFailure = latestByTime(history.semantic?.runs, run => isFormalRun(run) && ['failed', 'cancelled', 'interrupted'].includes(run.status))
     const latestDiagnostic = latestByTime(history.diagnostics, diagnostic => !diagnostic.resolvedAt)
     const liveItems = asArray(history.live?.items)
     const openLive = liveItems.find(item => item.state === 'open' || item.state === 'finalizing') ?? null
@@ -3102,8 +3118,14 @@ export class TraceInsightService {
         }
         for (const [findingIndex, finding] of asArray(item.report?.findings).entries()) {
           const findingKey = String(finding.category ?? finding.title ?? 'finding').toLowerCase()
-          addBucket(maps.findings, `programmatic:${findingKey}`, finding.category ?? finding.title ?? 'Finding', referenceFor(item, { findingIndex }), { layer: 'programmatic', severity: finding.severity ?? null })
-          for (const [evidenceIndex, evidence] of asArray(finding.evidence).entries()) {
+          const findingEvidence = asArray(finding.evidence)
+          const firstEvidence = findingEvidence[0]
+          addBucket(maps.findings, `programmatic:${findingKey}`, finding.title ?? finding.category ?? 'Finding', referenceFor(item, {
+            findingIndex,
+            ...(firstEvidence ? { evidenceIndex: 0 } : {}),
+            ...(Number.isSafeInteger(firstEvidence?.seq) ? { seq: firstEvidence.seq } : {}),
+          }), { layer: 'programmatic', severity: finding.severity ?? null })
+          for (const [evidenceIndex, evidence] of findingEvidence.entries()) {
             if (!evidence?.toolName) continue
             addBucket(maps.tools, String(evidence.toolName).toLowerCase(), evidence.toolName, referenceFor(item, { findingIndex, evidenceIndex, seq: evidence.seq ?? null }))
           }
@@ -3212,6 +3234,7 @@ export class TraceInsightService {
       .map(bucket => ({
         ...bucket,
         refCount: bucket.refs.length,
+        preciseRefCount: bucket.refs.filter(preciseResearchReference).length,
         sampleRefs: bucket.refs.slice(0, 12),
         refs: bucket.refs.slice(0, 12),
         drilldown: { endpoint: 'research/members', dimension, key: bucket.key, filters: appliedFilters },

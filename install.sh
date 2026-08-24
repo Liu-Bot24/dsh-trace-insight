@@ -2,7 +2,7 @@
 set -euo pipefail
 PROFILE="${1:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE="$HERE/dsh-plugin-trace-insight-1.2.1.tgz"
+PACKAGE="$HERE/dsh-plugin-trace-insight-1.2.2.tgz"
 PATCH_CORE="$HERE/patches/shell-patch.mjs"
 
 if ! command -v node >/dev/null 2>&1; then

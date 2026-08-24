@@ -316,7 +316,6 @@ const STYLE_TEXT = `
 .tiCompareField { padding: 9px 11px; border-radius: 9px; background: var(--ti-paper-soft); }
 .tiCompareField strong { display: block; margin-bottom: 4px; color: var(--ti-semantic); font-size: 10px; }
 .tiCompareField div { color: var(--ti-muted); font-size: 10.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
-.tiChanged { box-shadow: inset 3px 0 0 var(--ti-pending); }
 .tiComparePicker { display: grid; grid-template-columns: 1fr 1fr auto; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--ti-line); align-items: end; background: var(--ti-paper-soft); }
 .tiResearch { display: grid; gap: 14px; padding: 16px; }
 .tiResearchSection { border: 1px solid var(--ti-line); border-radius: 13px; background: var(--ti-paper); overflow: hidden; }
@@ -329,6 +328,8 @@ const STYLE_TEXT = `
 .tiResearchBuckets { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; padding: 12px; }
 .tiBucket { min-height: 74px; border: 1px solid var(--ti-line); border-radius: 10px; padding: 11px; background: var(--ti-paper); color: var(--ti-ink); text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
 .tiBucket:hover { border-color: #9fafea; box-shadow: var(--ti-shadow-sm); transform: translateY(-1px); }
+.tiBucket--static { cursor: default; }
+.tiBucket--static:hover { border-color: var(--ti-line); box-shadow: none; transform: none; }
 .tiBucket strong { display: block; font-size: 11.5px; }
 .tiBucket span { display: block; margin-top: 5px; color: var(--ti-muted); font-size: 10px; line-height: 1.5; }
 .tiInferenceCard { padding: 12px 13px; border: 1px solid #ecd3a0; border-radius: 11px; background: var(--ti-pending-soft); }
@@ -666,7 +667,7 @@ function collapseTimelineSemanticVersions(items) {
   items.forEach((item, index) => {
     if (historyLayer(item) !== 'semantic' || item?.referenceOnly || item?.coverageRole === 'provisional') return
     if (!Number.isSafeInteger(item?.fromSeq) || !Number.isSafeInteger(item?.toSeq)) return
-    const key = `${item.fromSeq}:${item.toSeq}`
+    const key = `${item.coverageRole || 'legacy'}:${item.fromSeq}:${item.toSeq}`
     const candidate = { index, time: semanticVersionTime(item) }
     const current = currentByRange.get(key)
     if (!current || candidate.time > current.time || (candidate.time === current.time && candidate.index > current.index)) {
@@ -676,7 +677,7 @@ function collapseTimelineSemanticVersions(items) {
   return items.filter((item, index) => {
     if (historyLayer(item) !== 'semantic' || item?.referenceOnly || item?.coverageRole === 'provisional') return true
     if (!Number.isSafeInteger(item?.fromSeq) || !Number.isSafeInteger(item?.toSeq)) return true
-    return currentByRange.get(`${item.fromSeq}:${item.toSeq}`)?.index === index
+    return currentByRange.get(`${item.coverageRole || 'legacy'}:${item.fromSeq}:${item.toSeq}`)?.index === index
   })
 }
 
@@ -1015,7 +1016,7 @@ function ProgrammaticEntry({ item, onSelect, onEvidence, compact = false, semant
   )
 }
 
-function SemanticEntry({ item, onSelect, onEvidence, onCompare, compareSelected, compact = false }) {
+function SemanticEntry({ item, onSelect, onEvidence, onCompare, compareSelected, compact = false, analysisPanel = null }) {
   const failed = item.status === 'failed'
   const cancelled = item.status === 'cancelled'
   const interrupted = item.status === 'interrupted'
@@ -1096,6 +1097,7 @@ function SemanticEntry({ item, onSelect, onEvidence, onCompare, compareSelected,
               semanticSections,
               actions,
             ),
+        analysisPanel,
       ),
     ),
   )
@@ -1579,12 +1581,16 @@ function ResourceGrid({ resources, label = '资源使用量', stale = false }) {
   )
 }
 
-function comparisonSide(side, label, differences, onEvidence) {
+function comparisonSide(side, label, onEvidence) {
   if (!side) return h('div', { className: 'tiEmpty' }, '尚未选择运行')
+  const riskLabel = semanticRiskLabel(side.risk)
   const fields = [
-    ['裁决', side.verdict || side.output?.verdict || '未提供', 'verdict'],
+    ['结论', side.verdict || side.output?.verdict || '未提供', 'verdict'],
+    ['执行经过', side.narrative || side.output?.narrative || '未提供', 'narrative'],
+    ['总体判断', side.assessment || side.output?.assessment || '未提供', 'assessment'],
     ['根因', (side.rootCauses || side.output?.rootCauses || []).join('；') || '未提供', 'rootCauses'],
-    ['下一步', (side.nextSteps || side.output?.nextSteps || []).join('；') || '未提供', 'nextSteps'],
+    ['建议的下一步', (side.nextSteps || side.output?.nextSteps || []).join('；') || '未提供', 'nextSteps'],
+    ['可复用经验', (side.lessons || side.output?.lessons || []).join('；') || '未提供', 'lessons'],
     ['输入证据', side.inputHash || '旧记录未提供输入证据哈希', 'inputHash'],
     ['版本', `prompt ${side.promptVersion || '—'} · analyzer ${side.analyzerVersion || '—'}`, 'versions'],
     ['生成配置', `effort ${side.generationConfiguration?.reasoningEffort || side.route?.reasoningEffort || '—'} · max output ${side.generationConfiguration?.maxOutputTokens ?? side.maxOutputTokens ?? '—'}`, 'generationConfiguration'],
@@ -1592,23 +1598,21 @@ function comparisonSide(side, label, differences, onEvidence) {
   ]
   return h('article', { className: 'tiCompareCard' },
     h('div', { className: 'tiCompareCardHead' },
-      h('div', { className: 'tiEntryKind' }, h('span', { className: 'tiBadge tiBadge--semantic' }, label), h('span', null, side.range ? `Seq ${side.range.fromSeq}–${side.range.toSeq}` : rangeLabel(side))),
+      h('div', { className: 'tiEntryKind' },
+        h('span', { className: 'tiBadge tiBadge--semantic' }, label),
+        riskLabel ? h('span', { className: `tiBadge tiBadge--risk-${side.risk}` }, riskLabel) : null,
+        h('span', null, side.range ? `Seq ${side.range.fromSeq}–${side.range.toSeq}` : rangeLabel(side)),
+      ),
       h('div', { className: 'tiEntryRoute' }, routeLabel(side.route)),
     ),
-    h('div', { className: 'tiCompareCardBody' }, ...fields.map(([name, value, key]) => {
-      const changed = key === 'versions'
-        ? differences?.promptVersion?.changed || differences?.analyzerVersion?.changed
-        : key === 'resources'
-          ? differences?.usage?.changed || differences?.durationMs?.changed || differences?.cache?.changed
-          : differences?.[key]?.changed
-      return h('div', { className: `tiCompareField${changed ? ' tiChanged' : ''}`, key },
-      h('strong', null, `${name}${changed ? ' · 有差异' : ''}`), h('div', null, value),
-    )}), side.id && onEvidence ? h('button', { className: 'tiButton', type: 'button', onClick: () => onEvidence({
+    h('div', { className: 'tiCompareCardBody' }, ...fields.map(([name, value, key]) => h('div', { className: 'tiCompareField', key },
+      h('strong', null, name), h('div', null, value),
+    )), side.id && onEvidence ? h('button', { className: 'tiButton', type: 'button', onClick: () => onEvidence({
       title: `${label} · ${side.verdict || '模型运行证据'}`,
       subtitle: `${side.range ? `Seq ${side.range.fromSeq}–${side.range.toSeq}` : rangeLabel(side)} · ${routeLabel(side.route)}`,
       kind: 'semantic', runId: side.id, evidenceIndex: 0, fromSeq: side.range?.fromSeq ?? side.fromSeq, toSeq: side.range?.toSeq ?? side.toSeq,
-      evidence: [], limitation: '从持久化运行记录按需读取第一条证据前后文；比较结果本身是服务端推断，不改写原运行。',
-    }) }, `查看${label}原运行证据`) : null),
+      evidence: [], limitation: '从持久化运行记录按需读取第一条证据前后文；并排查看不会改写原运行。',
+    }) }, `查看${label}原运行证据${side.evidenceRefs?.length ? `（${side.evidenceRefs.length}）` : ''}`) : null),
   )
 }
 
@@ -1618,9 +1622,7 @@ function comparisonReasonLabel(reason) {
     'both-runs-must-succeed': '两次运行都必须成功',
     'structured-output-missing': '至少一次运行缺少结构化输出',
     'input-hash-missing': '至少一次旧运行缺少输入证据哈希，不能证明输入相同',
-    'source-mismatch': '两次运行的输入证据不同，不能把差异归因于模型漂移',
-    'configuration-evidence-missing': '至少一次旧运行缺少完整生成配置证据，不能评估同配置漂移',
-    'configuration-mismatch': '两次运行的生成配置不同，不能把差异归因于同配置漂移',
+    'source-mismatch': '两次运行的输入证据不同，不能作为同一输入对照',
   })[reason] || reason
 }
 
@@ -1639,19 +1641,17 @@ function CompareView({ runs, leftId, rightId, onLeft, onRight, onCompare, onEvid
   return h('section', { className: 'tiTimelinePanel', role: 'tabpanel', 'aria-label': '两次运行对比' },
     h('div', { className: 'tiPanelHeader' }, h('div', null,
       h('h2', { className: 'tiPanelTitle' }, '同范围两次运行对比'),
-      h('div', { className: 'tiPanelMeta' }, '只比较两次成功且范围完全相同的运行；原始记录不会被改写。'),
+      h('div', { className: 'tiPanelMeta' }, '并排查看同一 Seq 范围的模型结论、风险、证据与资源数据。'),
     )),
     !supported ? h('div', { className: 'tiNotice tiNotice--warning' }, '当前 DSH 版本不支持可靠的运行对比，因此该功能已禁用。') : null,
     h('div', { className: 'tiComparePicker' },
       h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '1. 基准运行 A'), h('select', { className: 'tiSelect', value: leftId, onChange: event => onLeft(event.target.value), disabled: !supported }, h('option', { value: '' }, '先选择一条成功运行'), ...runs.map(run => h('option', { key: `left-${run.id}`, value: run.id }, runOptionLabel(run))))),
       h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '2. 同范围运行 B'), h('select', { className: 'tiSelect', value: rightRuns.some(run => run.id === rightId) ? rightId : '', onChange: event => onRight(event.target.value), disabled: !supported || !leftRun }, h('option', { value: '' }, leftRun ? (rightRuns.length ? '选择同范围的另一条成功运行' : '该范围暂无其他成功运行') : '请先选择运行 A'), ...rightRuns.map(run => h('option', { key: `right-${run.id}`, value: run.id }, runOptionLabel(run))))),
-      h('button', { className: 'tiButton tiButton--primary', type: 'button', disabled: !supported || !leftId || !rightId || leftId === rightId || loading, onClick: onCompare }, loading ? '比较中…' : '读取可信差异'),
+      h('button', { className: 'tiButton tiButton--primary', type: 'button', disabled: !supported || !leftId || !rightId || leftId === rightId || loading, onClick: onCompare }, loading ? '读取中…' : '并排查看'),
     ),
     comparison ? h(React.Fragment, null,
       comparison.comparable === false ? h('div', { className: 'tiNotice tiNotice--warning', role: 'status' }, `不可比较：${(comparison.reasons || ['两次运行不满足同范围成功条件']).map(comparisonReasonLabel).join('；')}`) : null,
-      h('div', { className: 'tiCompareGrid' }, comparisonSide(comparison.left, '运行 A', comparison.differences, onEvidence), comparisonSide(comparison.right, '运行 B', comparison.differences, onEvidence)),
-      comparison.conflict ? h('div', { className: 'tiResearch' }, h('div', { className: 'tiInferenceCard' }, h('strong', null, '冲突提示 · 推断'), h('p', null, comparison.conflict.assessable === false ? '当前两次运行不可比，不能评估冲突。' : comparison.conflict.detected ? `检测到裁决或根因冲突；依据：${(comparison.conflict.basis || []).join('、') || '服务端比较规则'}` : '服务端未检测到裁决或根因冲突。'))) : null,
-      comparison.drift ? h('div', { className: 'tiResearch' }, h('div', { className: 'tiInferenceCard' }, h('strong', null, '漂移提示 · 推断'), h('p', null, comparison.drift.assessable === false ? '配置不同或运行不可比，不能评估同配置漂移。' : comparison.drift.detected ? `检测到同配置输出漂移；依据：${(comparison.drift.basis || []).join('、') || '服务端比较规则'}` : '服务端未检测到同配置输出漂移。'))) : null,
+      h('div', { className: 'tiCompareGrid' }, comparisonSide(comparison.left, '运行 A', onEvidence), comparisonSide(comparison.right, '运行 B', onEvidence)),
     ) : h('div', { className: 'tiEmpty' }, '从时间线“选入两次运行对比”，或在上方选择两次成功运行。'),
   )
 }
@@ -1691,16 +1691,12 @@ function ResearchView({ summary, loading, supported, stale, onRefresh, onDrill, 
   const dimensions = summary?.dimensions || {}
   const selectedDimension = members?.drilldown?.dimension
   const preciseMembers = (members?.items || []).filter(hasPreciseResearchEvidence)
-  const memberSection = members?.items?.length ? h('section', { className: 'tiResearchSection tiResearchMembers', 'aria-label': '概览成员' },
+  const memberSection = preciseMembers.length ? h('section', { className: 'tiResearchSection tiResearchMembers', 'aria-label': '概览成员' },
     h('div', { className: 'tiResearchHead' }, h('div', null,
       h('div', { className: 'tiPanelTitle' }, members.label || '汇总成员'),
-      h('div', { className: 'tiPanelMeta' }, preciseMembers.length
-        ? `可查看 ${formatNumber(preciseMembers.length)} 条证据；${formatNumber((members.items || []).length - preciseMembers.length)} 条记录仅参与统计。`
-        : `当前 ${formatNumber(members.items.length)} 条记录仅参与汇总统计。`),
+      h('div', { className: 'tiPanelMeta' }, `可查看 ${formatNumber(preciseMembers.length)} 条证据；${formatNumber((members.items || []).length - preciseMembers.length)} 条记录仅参与统计。`),
     ), h('button', { className: 'tiButton tiButton--quiet', type: 'button', onClick: onCloseMembers }, '收起')),
-    preciseMembers.length
-      ? h('div', { className: 'tiTimeline' }, ...preciseMembers.map((item, index) => h(ResearchReferenceEntry, { item, onEvidence, key: item.id || `${item.fromSeq}-${index}` })))
-      : h('div', { className: 'tiResearchMemberNotice' }, '这些记录没有保存可定位的证据，因此不再显示重复的空白成员卡片。'),
+    h('div', { className: 'tiTimeline' }, ...preciseMembers.map((item, index) => h(ResearchReferenceEntry, { item, onEvidence, key: item.id || `${item.fromSeq}-${index}` }))),
   ) : null
   const appendMembers = (key, node) => [
     ...(node ? [node] : []),
@@ -1709,7 +1705,34 @@ function ResearchView({ summary, loading, supported, stale, onRefresh, onDrill, 
   const renderDimension = (key, label, { collapsible = false, nested = false } = {}) => {
     const buckets = dimensions[key] || []
     if (!buckets.length) return null
-    const content = h('div', { className: 'tiResearchBuckets' }, ...buckets.map(bucket => h('button', { className: 'tiBucket', type: 'button', key: bucket.key, onClick: () => onDrill(bucket) }, h('strong', null, `${bucket.label || bucket.key} · ${formatNumber(bucket.count)}`), h('span', null, bucket.drilldown?.dimension ? `查看全部 ${formatNumber(bucket.count)} 条成员 →` : `查看 ${researchRefs(bucket).length} / ${formatNumber(bucket.refCount ?? bucket.count)} 个证据样本 →`))))
+    const content = h('div', { className: 'tiResearchBuckets' }, ...buckets.map(bucket => {
+      const finding = key === 'findings'
+      const semanticFinding = finding && bucket.layer === 'semantic'
+      const programmaticFinding = finding && bucket.layer === 'programmatic'
+      const canDrill = Boolean(bucket.drilldown?.dimension) && Number(bucket.preciseRefCount || 0) > 0
+      const title = finding
+        ? (bucket.label || bucket.key)
+        : `${bucket.label || bucket.key} · ${formatNumber(bucket.count)}`
+      const detail = semanticFinding
+        ? '模型根因'
+        : programmaticFinding
+          ? `规则发现${Number(bucket.count) > 1 ? ` · 共 ${formatNumber(bucket.count)} 条` : ''}${canDrill ? ' · 查看证据 →' : ''}`
+          : canDrill
+            ? `查看 ${formatNumber(bucket.preciseRefCount)} 条可定位记录 →`
+            : key === 'models'
+              ? '模型运行统计'
+              : key === 'triggers'
+                ? '触发来源统计'
+                : key === 'phases'
+                  ? '执行阶段汇总'
+                  : '仅汇总统计'
+      const props = { className: `tiBucket${canDrill ? '' : ' tiBucket--static'}`, key: bucket.key }
+      if (canDrill) {
+        props.type = 'button'
+        props.onClick = () => onDrill(bucket)
+      }
+      return h(canDrill ? 'button' : 'div', props, h('strong', null, title), h('span', null, detail))
+    }))
     if (nested) return h('section', { className: 'tiResearchSubsection', key }, h('div', { className: 'tiResearchSubhead' }, label), content)
     if (collapsible) return h('details', { className: 'tiResearchSection tiResearchSection--collapsible', key },
       h('summary', { className: 'tiResearchHead' }, h('div', { className: 'tiPanelTitle' }, `${label} · ${formatNumber(buckets.reduce((sum, bucket) => sum + Number(bucket.count || 0), 0))}`)),
@@ -1729,9 +1752,6 @@ function ResearchView({ summary, loading, supported, stale, onRefresh, onDrill, 
     summary ? h('div', { className: 'tiResearch' },
       ...appendMembers('phases', renderDimension('phases', '开发阶段')),
       ...appendMembers('tools', renderDimension('tools', '工具使用')),
-      ...(summary.conflicts || []).map((item, index) => h('div', { className: 'tiInferenceCard', key: `conflict-${index}` }, h('strong', null, '冲突候选 · 推断'), h('p', null, item.summary || item.message || item.label || '规则分析与模型分析、或两次可比运行间存在差异。'), h('button', { className: 'tiRefButton', type: 'button', onClick: () => onDrill(item) }, '查看依据 →'))),
-      ...(summary.drift || []).map((item, index) => h('div', { className: 'tiInferenceCard', key: `drift-${index}` }, h('strong', null, '漂移候选 · 推断'), h('p', null, item.summary || item.message || item.label || '同范围可比运行可能出现版本漂移。'), h('button', { className: 'tiRefButton', type: 'button', onClick: () => onDrill(item) }, '回钻依据 →'))),
-      ...(memberSection && selectedDimension === 'conflicts' ? [memberSection] : []),
       hasRuntime ? h('details', { className: 'tiResearchSection tiResearchSection--collapsible tiResearchRuntime' },
         h('summary', { className: 'tiResearchHead' }, h('div', null,
           h('div', { className: 'tiPanelTitle' }, '运行信息'),
@@ -2526,7 +2546,10 @@ function TraceInsightView({ useSession, api, sessionId }) {
     const layerFiltered = filter === 'all' ? source : source.filter(item => historyLayer(item) === filter)
     return supportsHistoryPaging ? layerFiltered : layerFiltered.filter(item => localHistoryMatch(item, appliedHistoryFilters))
   }, [appliedHistoryFilters, data?.history, filter, historyPage.items, supportsHistoryPaging])
-  const reviewItemsWithVersions = useMemo(() => items.filter(item => ['programmatic', 'semantic'].includes(historyLayer(item))), [items])
+  const reviewItemsWithVersions = useMemo(() => items.filter(item => {
+    const layer = historyLayer(item)
+    return layer === 'programmatic' || (layer === 'semantic' && item.coverageRole !== 'supplemental')
+  }), [items])
   const reviewItems = useMemo(() => collapseTimelineSemanticVersions(reviewItemsWithVersions), [reviewItemsWithVersions])
   const hiddenJobCount = items.filter(item => historyLayer(item) === 'job').length
   const hiddenSemanticVersionCount = reviewItemsWithVersions.length - reviewItems.length
@@ -3189,6 +3212,39 @@ function TraceInsightView({ useSession, api, sessionId }) {
   const turnIndexStale = latestTimelineRevision !== null && numericRevision(data.turnIndexRevision) !== null && latestTimelineRevision > numericRevision(data.turnIndexRevision)
   const researchStale = Boolean(researchSummary) && (researchFilterSignature !== JSON.stringify(appliedHistoryFilters)
     || (latestTimelineRevision !== null && numericRevision(researchSummary?.revision) !== null && latestTimelineRevision > numericRevision(researchSummary.revision)))
+  const segmentAnalysisPanelFor = (item, itemKey) => {
+    if (segmentAnalysisItemId !== itemKey) return null
+    const relatedJob = relatedJobsByRange.get(`${item.fromSeq}:${item.toSeq}`) || null
+    const currentJobMatches = job && job.fromSeq === item.fromSeq && job.toSeq === item.toSeq
+    const persistedJobRunning = relatedJob && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(relatedJob.status)
+    const panelJob = currentJobMatches ? job : persistedJobRunning ? relatedJob : null
+    const anotherJobRunning = Boolean(job) && !currentJobMatches && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(job.status)
+    return h(SegmentAnalysisPanel, {
+      item,
+      models,
+      modelKey: manualModelKey,
+      onModelChange: setManualModelKey,
+      forceRun,
+      onForceChange: setForceRun,
+      preview: manualPreviewSignature === currentManualSignature ? manualPreview : null,
+      previewLoading: operationRunning('manual-preview'),
+      previewReady: Boolean(manualPreview) && manualPreviewSignature === currentManualSignature,
+      startLoading: operationRunning('manual-start'),
+      error: segmentAnalysisError,
+      job: panelJob,
+      blockedByOtherJob: anotherJobRunning,
+      supportsJobs,
+      overrideBudget,
+      overrideReason,
+      onOverrideBudget: setOverrideBudget,
+      onOverrideReason: setOverrideReason,
+      onStart: startManual,
+      onCancel: cancelJob,
+      onRetry: prepareJobRetry,
+      onRetryPreview: retrySegmentPreview,
+      onClose: () => { setSegmentAnalysisItemId(''); setSegmentAnalysisError('') },
+    })
+  }
 
   return h('div', { className: `tiRoot${evidenceSelection ? ' tiRoot--evidenceOpen' : ''}`, ref: timelineScrollRef },
     h('div', { className: 'tiWorkbench' },
@@ -3304,11 +3360,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
                     const hasFindings = Boolean(item.report?.findings?.length)
                     const rangeKey = `${item.fromSeq}:${item.toSeq}`
                     const relatedJob = relatedJobsByRange.get(rangeKey) || null
-                    const selectedForAnalysis = segmentAnalysisItemId === itemKey
-                    const currentJobMatches = job && job.fromSeq === item.fromSeq && job.toSeq === item.toSeq
                     const persistedJobRunning = relatedJob && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(relatedJob.status)
-                    const panelJob = currentJobMatches ? job : persistedJobRunning ? relatedJob : null
-                    const anotherJobRunning = Boolean(job) && !currentJobMatches && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(job.status)
                     row = h(ProgrammaticEntry, {
                       item,
                       onSelect: selectItem,
@@ -3317,35 +3369,19 @@ function TraceInsightView({ useSession, api, sessionId }) {
                       semanticThroughSeq: data.status?.coverage?.semanticThroughSeq ?? -1,
                       hasSupplementalResult: supplementalResultRanges.has(rangeKey),
                       relatedJob: persistedJobRunning ? relatedJob : null,
-                      analysisPanel: selectedForAnalysis ? h(SegmentAnalysisPanel, {
-                        item,
-                        models,
-                        modelKey: manualModelKey,
-                        onModelChange: setManualModelKey,
-                        forceRun,
-                        onForceChange: setForceRun,
-                        preview: manualPreviewSignature === currentManualSignature ? manualPreview : null,
-                        previewLoading: operationRunning('manual-preview'),
-                        previewReady: Boolean(manualPreview) && manualPreviewSignature === currentManualSignature,
-                        startLoading: operationRunning('manual-start'),
-                        error: segmentAnalysisError,
-                        job: panelJob,
-                        blockedByOtherJob: anotherJobRunning,
-                        supportsJobs,
-                        overrideBudget,
-                        overrideReason,
-                        onOverrideBudget: setOverrideBudget,
-                        onOverrideReason: setOverrideReason,
-                        onStart: startManual,
-                        onCancel: cancelJob,
-                        onRetry: prepareJobRetry,
-                        onRetryPreview: retrySegmentPreview,
-                        onClose: () => { setSegmentAnalysisItemId(''); setSegmentAnalysisError('') },
-                      }) : null,
+                      analysisPanel: segmentAnalysisPanelFor(item, itemKey),
                     })
                   }
                   else if (item.layer === 'semantic') {
-                    row = h(SemanticEntry, { item, onSelect: selectItem, onEvidence: openEvidence, onCompare: supportsCompare ? selectCompareRun : null, compareSelected: item.id === compareLeftId || item.id === compareRightId, compact: itemKey !== latestTimelineKey })
+                    row = h(SemanticEntry, {
+                      item,
+                      onSelect: selectItem,
+                      onEvidence: openEvidence,
+                      onCompare: supportsCompare ? selectCompareRun : null,
+                      compareSelected: item.id === compareLeftId || item.id === compareRightId,
+                      compact: itemKey !== latestTimelineKey,
+                      analysisPanel: segmentAnalysisPanelFor(item, itemKey),
+                    })
                   }
                   else row = h(GenericHistoryEntry, { item })
                   return h(React.Fragment, { key: renderKey },

@@ -720,6 +720,7 @@ test('manual segment can use a stronger alternate model without mutating primary
   assert.equal(history.semantic.runs[0].coverageRole, 'supplemental')
   assert.equal(history.semantic.runs[0].fromSeq, 6)
   assert.equal(history.semantic.runs[0].toSeq, 11)
+  assert.equal((await service.readStatus('session-manual')).latest.semanticSuccess, null)
 })
 
 test('a cached manual rerun appends a distinct auditable timeline record', async () => {
@@ -1423,8 +1424,8 @@ test('run comparison is pure, explicit about non-comparable ranges, and exposes 
   })
   await store.updateSession('session-compare', history => {
     history.semantic.runs.push(
-      { id: 'left', status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'same-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', settingsSnapshot: { model: { maxOutputTokens: 1_800 } }, startedAt: new Date(1_000).toISOString(), completedAt: new Date(1_100).toISOString(), inputChars: 100, usage: { inputTokens: 10, outputTokens: 2 }, output: { verdict: 'A', rootCauses: ['one'], nextSteps: ['x'], risk: 'low' } },
-      { id: 'right', status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'same-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', settingsSnapshot: { model: { maxOutputTokens: 1_800 } }, startedAt: new Date(2_000).toISOString(), completedAt: new Date(2_250).toISOString(), inputChars: 120, usage: { inputTokens: 12, outputTokens: 4 }, output: { verdict: 'B', rootCauses: ['two'], nextSteps: ['y'], risk: 'high' } },
+      { id: 'left', status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'same-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', settingsSnapshot: { model: { maxOutputTokens: 1_800 } }, startedAt: new Date(1_000).toISOString(), completedAt: new Date(1_100).toISOString(), inputChars: 100, usage: { inputTokens: 10, outputTokens: 2 }, output: { verdict: 'A', narrative: 'A narrative', assessment: 'A assessment', rootCauses: ['one'], nextSteps: ['x'], lessons: ['A lesson'], evidenceRefs: [{ seq: 1 }], risk: 'low' } },
+      { id: 'right', status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'same-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', settingsSnapshot: { model: { maxOutputTokens: 1_800 } }, startedAt: new Date(2_000).toISOString(), completedAt: new Date(2_250).toISOString(), inputChars: 120, usage: { inputTokens: 12, outputTokens: 4 }, output: { verdict: 'B', narrative: 'B narrative', assessment: 'B assessment', rootCauses: ['two'], nextSteps: ['y'], lessons: ['B lesson'], evidenceRefs: [{ seq: 2 }], risk: 'high' } },
       { id: 'different-source', status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'changed-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', output: { verdict: 'D', rootCauses: ['different'], nextSteps: [], risk: 'high' } },
       { id: 'missing-source', status: 'succeeded', fromSeq: 0, toSeq: 9, route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', output: { verdict: 'M', rootCauses: [], nextSteps: [], risk: 'low' } },
       { id: 'different-generation', status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'same-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'p1', analyzerVersion: 'a1', settingsSnapshot: { model: { maxOutputTokens: 2_400 } }, output: { verdict: 'G', rootCauses: ['generation'], nextSteps: [], risk: 'high' } },
@@ -1441,6 +1442,10 @@ test('run comparison is pure, explicit about non-comparable ranges, and exposes 
   assert.equal(compared.conflict.detected, true)
   assert.equal(compared.drift.detected, true)
   assert.equal(compared.differences.durationMs.changed, true)
+  assert.equal(compared.left.narrative, 'A narrative')
+  assert.equal(compared.left.assessment, 'A assessment')
+  assert.deepEqual(compared.left.lessons, ['A lesson'])
+  assert.deepEqual(compared.left.evidenceRefs, [{ seq: 1 }])
   assert.equal((await service.compareRuns('session-compare', 'left', 'different-range')).comparable, false)
   assert.equal((await service.compareRuns('session-compare', 'left', 'failed')).drift.assessable, false)
   const sourceMismatch = await service.compareRuns('session-compare', 'left', 'different-source')
@@ -1521,8 +1526,8 @@ test('research aggregation is filter-true, drillable, and only infers conflict o
   const { service, store } = serviceFor({ events: [], settings: { defaultRoute: null }, modelRunner: async () => semanticResult() })
   await store.updateSession('session-research', history => {
     history.programmatic.checkpoints.push(
-      { id: 'cp-1', historyKind: 'programmatic', fromSeq: 0, toSeq: 4, fromTurn: 1, toTurn: 1, trigger: 'turn-threshold', report: { status: { code: 'blocked' }, phases: [{ title: '定位', seqStart: 0, seqEnd: 4 }, { title: '定位', seqStart: 0, seqEnd: 4 }], findings: [{ severity: 'low', category: 'context', evidence: [] }, { severity: 'high', category: 'tooling', evidence: [{ seq: 2 }, { seq: 3, toolName: 'shell' }] }] } },
-      { id: 'cp-2', historyKind: 'programmatic', fromSeq: 5, toSeq: 9, fromTurn: 2, toTurn: 2, trigger: 'turn-threshold', report: { status: { code: 'complete' }, phases: [{ title: '验证', seqStart: 5, seqEnd: 9 }], findings: [] } },
+      { id: 'cp-1', historyKind: 'programmatic', fromSeq: 0, toSeq: 4, fromTurn: 1, toTurn: 1, trigger: 'turn-threshold', report: { status: { code: 'blocked' }, phases: [{ title: '定位', seqStart: 0, seqEnd: 4 }, { title: '定位', seqStart: 0, seqEnd: 4 }], findings: [{ severity: 'low', category: 'context', evidence: [] }, { severity: 'high', category: 'tooling', evidence: [{ seq: 2 }, { seq: 3, toolName: 'shell' }] }, { severity: 'medium', category: 'loop', title: '出现 5 步无进展重试循环', evidence: [] }] } },
+      { id: 'cp-2', historyKind: 'programmatic', fromSeq: 5, toSeq: 9, fromTurn: 2, toTurn: 2, trigger: 'turn-threshold', report: { status: { code: 'complete' }, phases: [{ title: '验证', seqStart: 5, seqEnd: 9 }], findings: [{ severity: 'medium', category: 'loop', title: '出现 3 步无进展重试循环', evidence: [{ seq: 7, toolName: 'loop-tool' }] }] } },
     )
     const common = { status: 'succeeded', fromSeq: 0, toSeq: 9, inputHash: 'same-research-source', route: { provider: 'p', model: 'm', reasoningEffort: 'low' }, promptVersion: 'prompt-1', analyzerVersion: 'analyzer-1', settingsSnapshot: { model: { maxOutputTokens: 1_800 } }, trigger: 'manual', coverageRole: 'supplemental' }
     history.semantic.runs.push(
@@ -1537,6 +1542,10 @@ test('research aggregation is filter-true, drillable, and only infers conflict o
   assert.equal(summary.dimensions.tools.find(bucket => bucket.key === 'shell').count, 1)
   assert.equal(summary.dimensions.phases.find(bucket => bucket.key === '定位').count, 2)
   assert.equal(summary.dimensions.models.find(bucket => bucket.key === 'p/m/low').count, 4)
+  const loopBucket = summary.dimensions.findings.find(bucket => bucket.key === 'programmatic:loop')
+  assert.equal(loopBucket.label, '出现 5 步无进展重试循环')
+  assert.equal(loopBucket.count, 2)
+  assert.equal(loopBucket.preciseRefCount, 1)
   assert.ok(summary.conflicts.some(item => item.type === 'programmatic-semantic-risk-mismatch' && item.inference))
   const semanticConflict = summary.conflicts.find(item => item.type === 'semantic-run-conflict')
   assert.deepEqual(semanticConflict.comparison, { leftRunId: 'run-low', rightRunId: 'run-high' })

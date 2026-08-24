@@ -1043,7 +1043,10 @@ test('timeline-first UI lands on the true latest record, keeps error squares vis
       checkpoint,
       run('different-range', 10, 20, 2, '2026-08-17T03:00:00.000Z'),
     ]) },
-    async readResearchSummary() { return { revision: 1, dimensions: { phases: [{ key: 'build', label: '构建', count: 1 }], findings: [{ key: 'free-text', label: '一次性完整根因句子', count: 1 }], tools: [], models: [], triggers: [] }, conflicts: [], drift: [], resources: null } },
+    async readResearchSummary() { return { revision: 1, dimensions: { phases: [{ key: 'build', label: '构建', count: 1 }], findings: [
+      { key: 'semantic:free-text', label: '一次性完整根因句子', count: 1, layer: 'semantic', preciseRefCount: 0, refs: [{ kind: 'semantic', id: 'semantic-one', rootCauseIndex: 0 }], drilldown: { dimension: 'findings', key: 'semantic:free-text' } },
+      { key: 'programmatic:loop', label: '出现 5 步无进展重试循环', count: 2, layer: 'programmatic', preciseRefCount: 2, refs: [{ kind: 'programmatic', id: 'program-one', findingIndex: 0, evidenceIndex: 0 }], drilldown: { dimension: 'findings', key: 'programmatic:loop' } },
+    ], tools: [], models: [], triggers: [] }, conflicts: [], drift: [], resources: null } },
   }
   const props = { useSession: () => ({ nodes: [{ seq: 20 }] }), api, sessionId: 'timeline-first' }
   harness.render(registration.component, props)
@@ -1051,8 +1054,18 @@ test('timeline-first UI lands on the true latest record, keeps error squares vis
   let tree = harness.render(registration.component, props)
   const semanticEntries = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'SemanticEntry')
   assert.deepEqual(semanticEntries.map(node => [node.props.item.id, node.props.compact]), [
-    ['different-range', false], ['latest-same-range', true],
+    ['different-range', false], ['old-same-range', true],
   ])
+  assert.equal(semanticEntries.some(node => node.props.item.coverageRole === 'supplemental'), false)
+  const oldPrimaryEntry = semanticEntries.find(node => node.props.item.id === 'old-same-range')
+  const oldPrimaryCard = oldPrimaryEntry.type(oldPrimaryEntry.props)
+  findTreeNodes(oldPrimaryCard, node => node.type === 'button' && treeText(node) === '换模型重新分析')[0].props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  tree = harness.render(registration.component, props)
+  const selectedPrimaryEntry = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'SemanticEntry')
+    .find(node => node.props.item.id === 'old-same-range')
+  assert.ok(selectedPrimaryEntry.props.analysisPanel)
+  assert.match(treeText(selectedPrimaryEntry.props.analysisPanel.type(selectedPrimaryEntry.props.analysisPanel.props)), /分析此段/u)
   const programmaticEntry = findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'ProgrammaticEntry')[0]
   assert.equal(programmaticEntry.props.compact, false)
   assert.match(treeText(programmaticEntry.type(programmaticEntry.props)), /高 · 重复失败/)
@@ -1074,6 +1087,32 @@ test('timeline-first UI lands on the true latest record, keeps error squares vis
   const comparePanel = compareView.type(compareView.props)
   const selects = findTreeNodes(comparePanel, node => node.type === 'select')
   assert.deepEqual(selects[1].children.filter(child => child?.type === 'option').map(option => option.props.value), ['', 'latest-same-range'])
+  const directComparison = compareView.type({
+    ...compareView.props,
+    comparison: {
+      comparable: true,
+      left: {
+        id: 'old-same-range', range: { fromSeq: 0, toSeq: 9 }, route: { provider: 'p', model: 'model-a' },
+        risk: 'low', verdict: '继续执行', narrative: '运行 A 执行经过', assessment: '运行 A 总体判断',
+        rootCauses: ['未发现阻断'], nextSteps: ['完成检查'], lessons: ['保留证据'], evidenceRefs: [{ seq: 3 }],
+      },
+      right: {
+        id: 'latest-same-range', range: { fromSeq: 0, toSeq: 9 }, route: { provider: 'p', model: 'model-b' },
+        risk: 'high', verdict: '暂停执行', narrative: '运行 B 执行经过', assessment: '运行 B 总体判断',
+        rootCauses: ['存在高风险操作'], nextSteps: ['先核验证据'], lessons: ['先做验证'], evidenceRefs: [{ seq: 4 }, { seq: 5 }],
+      },
+      differences: { verdict: { changed: true }, rootCauses: { changed: true }, nextSteps: { changed: true } },
+      conflict: { assessable: true, detected: true },
+      drift: { assessable: false, detected: null },
+    },
+  })
+  const comparisonRiskBadges = findTreeNodes(directComparison, node => String(node.props?.className || '').includes('tiBadge--risk-'))
+  assert.deepEqual(comparisonRiskBadges.map(treeText), ['低风险', '高风险'])
+  assert.doesNotMatch(treeText(directComparison), /有差异|冲突提示|漂移提示/u)
+  assert.match(treeText(directComparison), /结论继续执行执行经过运行 A 执行经过总体判断运行 A 总体判断/u)
+  assert.match(treeText(directComparison), /可复用经验保留证据/u)
+  assert.doesNotMatch(treeText(directComparison), /裁决/u)
+  assert.ok(findTreeNodes(directComparison, node => node.props?.className === 'tiCompareField').length > 0)
 
   findTreeNodes(tree, node => node.type === 'button' && node.props?.role === 'tab' && treeText(node) === '概览')[0].props.onClick()
   harness.render(registration.component, props)
@@ -1085,6 +1124,8 @@ test('timeline-first UI lands on the true latest record, keeps error squares vis
     ...summaryView.props,
     summary: {
       ...overviewSummary,
+      conflicts: [{ summary: '不应显示的冲突候选', inference: true }],
+      drift: [{ summary: '不应显示的漂移候选', inference: true }],
       dimensions: {
         ...overviewSummary.dimensions,
         models: [{ key: 'provider/model', label: 'provider/model', count: 1, drilldown: { dimension: 'models', key: 'provider/model' } }],
@@ -1097,15 +1138,19 @@ test('timeline-first UI lands on the true latest record, keeps error squares vis
       drilldown: { dimension: 'findings', key: 'programmatic:workspace' },
     },
   })
-  assert.match(treeText(overviewPanel), /问题汇总.*一次性完整根因句子/s)
+  assert.match(treeText(overviewPanel), /问题汇总.*一次性完整根因句子.*模型根因/s)
+  assert.match(treeText(overviewPanel), /出现 5 步无进展重试循环.*规则发现 · 共 2 条/s)
+  assert.doesNotMatch(treeText(overviewPanel), /一次性完整根因句子\s*·\s*1/u)
+  const findingCards = findTreeNodes(overviewPanel, node => String(node.props?.className || '').includes('tiBucket'))
+  assert.equal(findingCards.find(node => /一次性完整根因句子/.test(treeText(node))).type, 'div')
+  assert.equal(findingCards.find(node => /出现 5 步无进展重试循环/.test(treeText(node))).type, 'button')
+  assert.doesNotMatch(treeText(overviewPanel), /冲突候选|漂移候选|不应显示/u)
   const researchBody = findTreeNodes(overviewPanel, node => node.props?.className === 'tiResearch')[0]
   const visibleSections = researchBody.children.filter(Boolean)
-  const problemSummary = visibleSections.at(-1)
   const problemIndex = visibleSections.findIndex(node => node.type === 'details' && /tiResearchSection--collapsible/.test(node.props?.className || '') && /问题汇总/.test(treeText(node.children?.[0])))
   const memberIndex = visibleSections.findIndex(node => /tiResearchMembers/.test(node.props?.className || ''))
   assert.ok(problemIndex >= 0)
-  assert.equal(memberIndex, problemIndex + 1)
-  assert.equal(problemSummary.props.className, 'tiResearchSection tiResearchMembers')
+  assert.equal(memberIndex, -1)
   const runtimeSummary = visibleSections.find(node => node.type === 'details' && /tiResearchRuntime/.test(node.props?.className || ''))
   assert.ok(runtimeSummary)
   assert.match(runtimeSummary.props.className, /tiResearchSection--collapsible/)
@@ -1114,6 +1159,7 @@ test('timeline-first UI lands on the true latest record, keeps error squares vis
   assert.equal(problemSummaryNode.type, 'details')
   assert.match(problemSummaryNode.props.className, /tiResearchSection--collapsible/)
   assert.equal(problemSummaryNode.props.open, undefined)
+  assert.doesNotMatch(treeText(overviewPanel), /这些记录没有保存可定位的证据|空白成员卡片/u)
 })
 
 test('programmatic cards separate turn outcome from tool results and show real details without implying missing model coverage', async () => {
@@ -1250,7 +1296,7 @@ test('analyze-segment stays in review and opens a confirmation on its source car
   assert.equal(findTreeNodes(entry.type(entry.props), node => typeof node.type === 'function' && node.type.name === 'SegmentAnalysisPanel').length, 0)
 })
 
-test('diagnostic records stay out of review while an active storage alert stays compact', async () => {
+test('diagnostic and supplemental records stay out of formal review while an active storage alert stays compact', async () => {
   const harness = interactiveReactHarness()
   const plugin = await loadBundle(harness.react)
   let registration
@@ -1274,7 +1320,7 @@ test('diagnostic records stay out of review while an active storage alert stays 
   await new Promise(resolve => setImmediate(resolve))
   const tree = harness.render(registration.component, props)
   assert.equal(findTreeNodes(tree, node => typeof node.type === 'function' && node.type.name === 'GenericHistoryEntry').length, 0)
-  assert.deepEqual(findTreeNodes(tree, node => typeof node.type === 'function' && ['ProgrammaticEntry', 'SemanticEntry'].includes(node.type.name)).map(node => node.type.name), ['ProgrammaticEntry', 'SemanticEntry'])
+  assert.deepEqual(findTreeNodes(tree, node => typeof node.type === 'function' && ['ProgrammaticEntry', 'SemanticEntry'].includes(node.type.name)).map(node => node.type.name), ['ProgrammaticEntry'])
   assert.match(treeText(tree), /后台保存暂时失败（EPERM）.*下一次成功保存后自动清除/s)
   assert.doesNotMatch(treeText(tree), /C:\\private\\session/)
 })
@@ -1289,7 +1335,7 @@ test('a slow research bucket cannot replace a newer exact drilldown', async () =
   })
   let resolveSlowMembers
   const slowMembers = new Promise(resolve => { resolveSlowMembers = resolve })
-  const bucket = key => ({ key, label: key, count: 1, drilldown: { endpoint: 'research/members', dimension: 'tools', key, filters: {} } })
+  const bucket = key => ({ key, label: key, count: 1, preciseRefCount: 1, drilldown: { endpoint: 'research/members', dimension: 'tools', key, filters: {} } })
   const api = {
     async readCapabilities() { return { endpoints: ['insight/bootstrap', 'history/page', 'research/summary', 'research/members'] } },
     async readBootstrap() { return boundedBootstrap([]) },
@@ -1330,7 +1376,7 @@ test('opening an overview member never replaces the review timeline, filters, or
     slots: { inject(_name, callback) { callback() }, register(options, component) { registration = { options, component }; return () => {} } },
   })
   const original = { id: 'original-review', historyKind: 'semantic', status: 'succeeded', fromSeq: 1, toSeq: 20, route: { provider: 'p', model: 'm' }, output: { verdict: 'ORIGINAL_REVIEW', evidenceRefs: [] } }
-  const bucket = { key: 'issue', label: '问题', count: 1, drilldown: { endpoint: 'research/members', dimension: 'findings', key: 'issue', filters: { layers: ['programmatic'] } } }
+  const bucket = { key: 'issue', label: '问题', count: 1, layer: 'programmatic', preciseRefCount: 1, drilldown: { endpoint: 'research/members', dimension: 'findings', key: 'issue', filters: { layers: ['programmatic'] } } }
   const api = {
     async readCapabilities() { return { endpoints: ['insight/bootstrap', 'history/page', 'research/summary', 'research/members', 'evidence/read'] } },
     async readBootstrap() { const value = boundedBootstrap([original]); value.history.total = 9; return value },
@@ -1640,6 +1686,8 @@ test('generated client implements bounded P1/P2 investigation workflows without 
   assert.match(source, /CURSOR_STALE/)
   assert.match(source, /history\/delta/)
   assert.match(source, /同范围两次运行对比/)
+  assert.match(source, /并排查看同一 Seq 范围的模型结论、风险、证据与资源数据/)
+  assert.doesNotMatch(source, /冲突提示 · 推断|漂移提示 · 推断|有差异/u)
   assert.match(source, /旧记录未提供输入证据哈希/)
   assert.match(source, /promptVersion/)
   assert.match(source, /analyzerVersion/)
@@ -1652,8 +1700,7 @@ test('generated client implements bounded P1/P2 investigation workflows without 
   assert.match(source, /汇总成员引用/)
   assert.match(source, /findingIndex/)
   assert.match(source, /evidenceIndex/)
-  assert.match(source, /冲突候选 · 推断/)
-  assert.match(source, /漂移候选 · 推断/)
+  assert.doesNotMatch(source, /冲突候选 · 推断|漂移候选 · 推断/u)
   assert.match(source, /仅显示真实资源量/)
   assert.match(source, /不估算金额/)
   assert.match(source, /overrideBudget/)
