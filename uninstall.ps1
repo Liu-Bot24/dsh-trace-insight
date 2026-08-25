@@ -9,6 +9,7 @@ Set-StrictMode -Version Latest
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
+$PackageCore = Join-Path $Here 'scripts\managed-package.mjs'
 $SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2')
 
 function Test-DshRunning {
@@ -27,6 +28,9 @@ function Test-DshRunning {
 
 if (-not (Test-Path -LiteralPath $PatchCore -PathType Leaf)) {
   throw "缺少右侧栏卸载组件：$PatchCore"
+}
+if (-not (Test-Path -LiteralPath $PackageCore -PathType Leaf)) {
+  throw "缺少持久包卸载组件：$PackageCore"
 }
 if (Test-DshRunning) {
   throw 'DSH 正在运行。请先关闭 DSH，再重新运行卸载程序。'
@@ -73,4 +77,6 @@ if (-not [string]::IsNullOrWhiteSpace($SourceRoot)) {
   & $dsh.Source plugin --profile $Profile remove dsh-plugin-trace-insight
 }
 if ($LASTEXITCODE -ne 0) { throw "卸载失败，退出码：$LASTEXITCODE" }
+$null = & $node.Source $PackageCore cleanup --profile $Profile
+if ($LASTEXITCODE -ne 0) { throw "持久插件包清理失败，退出码：$LASTEXITCODE" }
 Write-Host 'Trace Insight 和右侧栏已卸载。请重启 DSH。' -ForegroundColor Green

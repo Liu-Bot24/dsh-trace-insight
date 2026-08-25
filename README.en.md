@@ -64,7 +64,7 @@ Compare accepts two successful analyses with the same range and input, then show
 
 A global installation of DeepSeek Harness `0.1.0-rc.7`, `0.1.0-rc.8`, `0.1.1-rc.1`, or `0.1.1-rc.2` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
 
-Download or clone this repository, then run the installer from the repository root. The installer checks the current global DSH installation, installs Trace Insight, and adds the right sidebar.
+Download or clone this repository, then run the installer from the repository root. The installer checks the current global DSH installation, installs Trace Insight, and adds the right sidebar. Its plugin archive is retained under `<DSH_HOME>/trace-insight/packages`; after installation, DSH does not depend on the source checkout or download directory remaining in place.
 
 ### Windows
 
@@ -87,6 +87,10 @@ dsh web
 ```
 
 Open any Session and select **Trace Insight** to open the sidebar.
+
+## Reinstallation and upgrades
+
+Stop DSH, switch to the repository or Release contents for the target version, and run the corresponding installer again. Existing analysis history, model settings, and Session configuration are preserved. The installer migrates external plugin-archive references left by earlier installations into the DSH data directory.
 
 ## First use
 
@@ -162,7 +166,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 bash ./uninstall.sh
 ```
 
-The uninstaller removes both Trace Insight and the right sidebar. Existing analysis history remains in the data directory.
+The uninstaller removes Trace Insight, the right sidebar, and the plugin archive managed by the installer. Existing analysis history remains in the data directory.
 
 ## Troubleshooting
 

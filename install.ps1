@@ -10,14 +10,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.3.0'
+$PluginVersion = '1.3.1'
 $SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2')
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
-if ([string]::IsNullOrWhiteSpace($PackagePath)) {
-  $PackagePath = Join-Path $Here "dsh-plugin-trace-insight-$PluginVersion.tgz"
+$PackageCore = Join-Path $Here 'scripts\managed-package.mjs'
+if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
+  $PackagePath = [System.IO.Path]::GetFullPath($PackagePath)
 }
-$PackagePath = [System.IO.Path]::GetFullPath($PackagePath)
 
 function Write-Step([string]$Message) {
   Write-Host "`n==> $Message" -ForegroundColor Cyan
@@ -161,18 +161,6 @@ if (Test-DshRunning) {
   throw 'DSH 正在运行。请先关闭 DSH，再重新运行安装程序。'
 }
 
-if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
-  $npm = Get-Command npm -ErrorAction SilentlyContinue
-  if ($null -eq $npm) { throw '未找到 npm，无法生成 Trace Insight 安装包。' }
-  Write-Step '生成 Trace Insight 安装包'
-  Push-Location $Here
-  try { $null = Invoke-Checked -FilePath $npm.Source -Arguments @('pack', '--ignore-scripts', '--silent') -Capture }
-  finally { Pop-Location }
-}
-if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
-  throw "无法生成安装包：$PackagePath"
-}
-
 if (-not [string]::IsNullOrWhiteSpace($SourceRoot)) {
   $null = Ensure-Pnpm
 }
@@ -181,6 +169,9 @@ Write-Host "使用：$($runner.Display)" -ForegroundColor DarkGray
 
 if (-not (Test-Path -LiteralPath $PatchCore -PathType Leaf)) {
   throw "缺少右侧栏安装组件：$PatchCore"
+}
+if (-not (Test-Path -LiteralPath $PackageCore -PathType Leaf)) {
+  throw "缺少持久包安装组件：$PackageCore"
 }
 $versionOutput = Invoke-Dsh -Runner $runner -Arguments @('--version') -Capture
 $versionText = ($versionOutput -join ' ').Trim()
@@ -200,6 +191,37 @@ $patchRootArguments = @()
 if (-not [string]::IsNullOrWhiteSpace($DshRoot)) {
   $patchRootArguments = @('--dsh-root', [System.IO.Path]::GetFullPath($DshRoot))
 }
+
+$temporaryPackageDirectory = $null
+try {
+  if ([string]::IsNullOrWhiteSpace($PackagePath)) {
+    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    if ($null -eq $npm) { throw '未找到 npm，无法生成 Trace Insight 安装包。' }
+    $temporaryPackageDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "trace-insight-pack-$([guid]::NewGuid().ToString('N'))"
+    $null = New-Item -ItemType Directory -Path $temporaryPackageDirectory -Force
+    Write-Step '生成 Trace Insight 安装包'
+    Push-Location $Here
+    try {
+      $null = Invoke-Checked -FilePath $npm.Source -Arguments @('pack', '--ignore-scripts', '--silent', '--pack-destination', $temporaryPackageDirectory) -Capture
+    }
+    finally {
+      Pop-Location
+    }
+    $PackagePath = Join-Path $temporaryPackageDirectory "dsh-plugin-trace-insight-$PluginVersion.tgz"
+  }
+  if (-not (Test-Path -LiteralPath $PackagePath -PathType Leaf)) {
+    throw "无法生成安装包：$PackagePath"
+  }
+  $managedPackageOutput = Invoke-Checked -FilePath $node.Source -Arguments @($PackageCore, 'stage', '--source', $PackagePath, '--version', $PluginVersion) -Capture
+  $managedPackagePath = ($managedPackageOutput -join [Environment]::NewLine).Trim()
+  if ([string]::IsNullOrWhiteSpace($managedPackagePath)) { throw '持久插件包路径为空。' }
+}
+finally {
+  if ($null -ne $temporaryPackageDirectory -and (Test-Path -LiteralPath $temporaryPackageDirectory)) {
+    Remove-Item -LiteralPath $temporaryPackageDirectory -Recurse -Force
+  }
+}
+
 $statusOutput = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'status') + $patchRootArguments + @('--json')) -Capture
 $patchStatus = (($statusOutput -join [Environment]::NewLine) | ConvertFrom-Json)
 if ($patchStatus.state -ne 'original' -and $patchStatus.state -ne 'patched') {
@@ -209,10 +231,13 @@ $patchWasOriginal = $patchStatus.state -eq 'original'
 
 Write-Step '安装右侧栏'
 $null = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'apply') + $patchRootArguments + @('--json')) -Capture
+$migrationOutput = Invoke-Checked -FilePath $node.Source -Arguments @($PackageCore, 'migrate', '--profile', $Profile, '--package', $managedPackagePath, '--json') -Capture
+$migration = (($migrationOutput -join [Environment]::NewLine) | ConvertFrom-Json)
+$pluginWasInstalled = $migration.state -ne 'profile-not-created' -and $migration.state -ne 'not-installed'
 
 try {
   Write-Step "安装到 DSH profile：$Profile"
-  Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'add', $PackagePath)
+  Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'add', $managedPackagePath)
 
   Write-Step '检查安装结果'
   $dump = Invoke-Dsh -Runner $runner -Arguments @('--profile', $Profile, '--dump-config') -Capture
@@ -222,12 +247,18 @@ try {
   }
 } catch {
   $installError = $_
-  try { Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'remove', 'dsh-plugin-trace-insight') } catch {}
+  if (-not $pluginWasInstalled) {
+    try {
+      Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'remove', 'dsh-plugin-trace-insight')
+      $null = Invoke-Checked -FilePath $node.Source -Arguments @($PackageCore, 'cleanup', '--profile', $Profile) -Capture
+    } catch {}
+  }
   if ($patchWasOriginal) {
     try { $null = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'restore-active') + $patchRootArguments + @('--json')) -Capture } catch {}
   }
   throw $installError
 }
+$null = Invoke-Checked -FilePath $node.Source -Arguments @($PackageCore, 'finalize', '--profile', $Profile, '--package', $managedPackagePath) -Capture
 Write-Host 'Trace Insight 和右侧栏已安装。' -ForegroundColor Green
 
 $alreadyRunning = Test-DshRunning

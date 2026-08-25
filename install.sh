@@ -2,8 +2,18 @@
 set -euo pipefail
 PROFILE="${1:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE="$HERE/dsh-plugin-trace-insight-1.3.0.tgz"
+PLUGIN_VERSION="1.3.1"
+PACKAGE=""
 PATCH_CORE="$HERE/patches/shell-patch.mjs"
+PACKAGE_CORE="$HERE/scripts/managed-package.mjs"
+PACKAGE_BUILD_ROOT=""
+
+cleanup_package_build() {
+  if [[ -n "$PACKAGE_BUILD_ROOT" && -d "$PACKAGE_BUILD_ROOT" ]]; then
+    rm -rf "$PACKAGE_BUILD_ROOT"
+  fi
+}
+trap cleanup_package_build EXIT
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js 22.19.0 or newer is required." >&2
@@ -22,11 +32,15 @@ if ! command -v npm >/dev/null 2>&1; then
   echo "npm is required." >&2
   exit 1
 fi
-if [[ ! -f "$PACKAGE" ]]; then
-  (cd "$HERE" && npm pack --ignore-scripts --silent >/dev/null)
-fi
+PACKAGE_BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/trace-insight-pack.XXXXXX")"
+(cd "$HERE" && npm pack --ignore-scripts --silent --pack-destination "$PACKAGE_BUILD_ROOT" >/dev/null)
+PACKAGE="$PACKAGE_BUILD_ROOT/dsh-plugin-trace-insight-$PLUGIN_VERSION.tgz"
 if [[ ! -f "$PACKAGE" ]]; then
   echo "Could not create the Trace Insight package: $PACKAGE" >&2
+  exit 1
+fi
+if [[ ! -f "$PACKAGE_CORE" ]]; then
+  echo "Missing Trace Insight managed-package component: $PACKAGE_CORE" >&2
   exit 1
 fi
 if ! command -v dsh >/dev/null 2>&1; then
@@ -44,6 +58,8 @@ case "$DSH_VERSION" in
     ;;
 esac
 
+MANAGED_PACKAGE="$(node "$PACKAGE_CORE" stage --source "$PACKAGE" --version "$PLUGIN_VERSION")"
+
 PATCH_ROOT_ARGS=(--dsh-root "${DSH_PACKAGE_ROOT:-$DSH_COMMAND}")
 PATCH_STATUS="$(node "$PATCH_CORE" status "${PATCH_ROOT_ARGS[@]}" --json)"
 PATCH_WAS_ORIGINAL=0
@@ -55,14 +71,25 @@ elif [[ "$PATCH_STATUS" != *'"state":"patched"'* ]]; then
 fi
 
 node "$PATCH_CORE" apply "${PATCH_ROOT_ARGS[@]}" --json >/dev/null
-if ! "${DSH[@]}" plugin --profile "$PROFILE" add "$PACKAGE"; then
+MIGRATION_RESULT="$(node "$PACKAGE_CORE" migrate --profile "$PROFILE" --package "$MANAGED_PACKAGE" --json)"
+PLUGIN_WAS_INSTALLED=1
+if [[ "$MIGRATION_RESULT" == *'"state":"profile-not-created"'* || "$MIGRATION_RESULT" == *'"state":"not-installed"'* ]]; then
+  PLUGIN_WAS_INSTALLED=0
+fi
+if ! "${DSH[@]}" plugin --profile "$PROFILE" add "$MANAGED_PACKAGE"; then
+  if [[ "$PLUGIN_WAS_INSTALLED" -eq 0 ]] && "${DSH[@]}" plugin --profile "$PROFILE" remove dsh-plugin-trace-insight; then
+    node "$PACKAGE_CORE" cleanup --profile "$PROFILE" >/dev/null || true
+  fi
   if [[ "$PATCH_WAS_ORIGINAL" -eq 1 ]]; then node "$PATCH_CORE" restore-active "${PATCH_ROOT_ARGS[@]}" --json >/dev/null; fi
   exit 1
 fi
 if ! "${DSH[@]}" --profile "$PROFILE" --dump-config | grep -q 'dsh-plugin-trace-insight'; then
-  "${DSH[@]}" plugin --profile "$PROFILE" remove dsh-plugin-trace-insight || true
+  if [[ "$PLUGIN_WAS_INSTALLED" -eq 0 ]] && "${DSH[@]}" plugin --profile "$PROFILE" remove dsh-plugin-trace-insight; then
+    node "$PACKAGE_CORE" cleanup --profile "$PROFILE" >/dev/null || true
+  fi
   if [[ "$PATCH_WAS_ORIGINAL" -eq 1 ]]; then node "$PATCH_CORE" restore-active "${PATCH_ROOT_ARGS[@]}" --json >/dev/null; fi
   echo "Trace Insight was not added to the DSH web profile." >&2
   exit 1
 fi
+node "$PACKAGE_CORE" finalize --profile "$PROFILE" --package "$MANAGED_PACKAGE" >/dev/null
 echo "Installed. Restart DSH with: dsh web"

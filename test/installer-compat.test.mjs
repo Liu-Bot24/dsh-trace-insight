@@ -9,11 +9,12 @@ const files = Object.fromEntries(
     .map(name => [name, readFileSync(new URL(name, root), 'utf8')]),
 )
 
-test('release metadata and installers agree on Trace Insight 1.3.0', () => {
-  assert.equal(packageJson.version, '1.3.0')
+test('release metadata and installers agree on Trace Insight 1.3.1', () => {
+  assert.equal(packageJson.version, '1.3.1')
   assert.equal(packageJson.dshCompatibility.version, '0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2')
-  assert.match(files['install.sh'], /dsh-plugin-trace-insight-1\.3\.0\.tgz/u)
-  assert.match(files['install.ps1'], /\$PluginVersion = '1\.3\.0'/u)
+  assert.match(files['install.sh'], /PLUGIN_VERSION="1\.3\.1"/u)
+  assert.match(files['install.sh'], /dsh-plugin-trace-insight-\$PLUGIN_VERSION\.tgz/u)
+  assert.match(files['install.ps1'], /\$PluginVersion = '1\.3\.1'/u)
 })
 
 test('public installers and uninstallers accept every supported DSH release but not unknown releases', () => {

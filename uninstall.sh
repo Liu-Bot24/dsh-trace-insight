@@ -3,9 +3,14 @@ set -euo pipefail
 
 PROFILE="${1:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+PACKAGE_CORE="$HERE/scripts/managed-package.mjs"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js is required." >&2
+  exit 1
+fi
+if [[ ! -f "$PACKAGE_CORE" ]]; then
+  echo "Missing Trace Insight managed-package component: $PACKAGE_CORE" >&2
   exit 1
 fi
 if { command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:3080 -sTCP:LISTEN >/dev/null 2>&1; } \
@@ -28,4 +33,5 @@ case "$DSH_VERSION" in
 esac
 node "$HERE/patches/shell-patch.mjs" restore-active --dsh-root "$DSH_COMMAND" --json >/dev/null
 "$DSH_COMMAND" plugin --profile "$PROFILE" remove dsh-plugin-trace-insight
+node "$PACKAGE_CORE" cleanup --profile "$PROFILE" >/dev/null
 echo "Trace Insight and the right-side inspector were removed. Restart DSH."

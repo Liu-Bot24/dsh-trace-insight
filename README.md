@@ -64,7 +64,7 @@ DSH 的对话或轨迹保留在左侧，Trace Insight 显示在可调整宽度�
 
 需要全局安装 DeepSeek Harness `0.1.0-rc.7`、`0.1.0-rc.8`、`0.1.1-rc.1` 或 `0.1.1-rc.2`，并使用 Node.js `22.19.0` 或更高版本。安装前请关闭正在运行的 DSH。
 
-下载或克隆本仓库后，在仓库根目录执行对应的安装程序。安装程序会检查当前全局 DSH、安装 Trace Insight，并接入右侧栏。
+下载或克隆本仓库后，在仓库根目录执行对应的安装程序。安装程序会检查当前全局 DSH、安装 Trace Insight，并接入右侧栏。安装所需的插件包会保存在 `<DSH_HOME>/trace-insight/packages`；安装完成后，DSH 不依赖源码目录或下载目录继续存在。
 
 ### Windows
 
@@ -87,6 +87,10 @@ dsh web
 ```
 
 打开任意会话后，点击 **解读** 即可打开右侧栏。
+
+## 重装与升级
+
+关闭 DSH，换到目标版本的仓库或 Release 内容后重新运行对应的安装程序。已有分析历史、模型设置和 Session 配置会保留；较早安装留下的外部插件包引用会由安装程序迁移到 DSH 数据目录。
 
 ## 第一次使用
 
@@ -162,7 +166,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 bash ./uninstall.sh
 ```
 
-卸载程序会同时移除 Trace Insight 和右侧栏。已经保存的分析历史会保留在数据目录中。
+卸载程序会同时移除 Trace Insight、右侧栏和安装程序管理的插件包。已经保存的分析历史会保留在数据目录中。
 
 ## 常见问题
 
