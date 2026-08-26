@@ -2,7 +2,7 @@
 set -euo pipefail
 PROFILE="${1:-web}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_VERSION="1.3.2"
+PLUGIN_VERSION="1.3.3"
 DSH_PACKAGE="@deepseek-ai/dsh"
 PACKAGE=""
 PATCH_CORE="$HERE/patches/shell-patch.mjs"

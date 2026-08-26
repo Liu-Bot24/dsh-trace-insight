@@ -109,9 +109,9 @@ if (Test-DshRunning) {
 }
 
 $node = Get-Command node -ErrorAction Stop
-if ([string]::IsNullOrWhiteSpace($SourceRoot)
-  -and $null -eq (Get-Command dsh -ErrorAction SilentlyContinue)
-  -and $null -eq (Get-Command npx -ErrorAction SilentlyContinue)) {
+$availableGlobalDsh = Get-Command dsh -ErrorAction SilentlyContinue
+$availableNpx = Get-Command npx -ErrorAction SilentlyContinue
+if ([string]::IsNullOrWhiteSpace($SourceRoot) -and $null -eq $availableGlobalDsh -and $null -eq $availableNpx) {
   throw '未找到全局 dsh 或 npx。'
 }
 $null = Ensure-Pnpm

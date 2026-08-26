@@ -31,7 +31,7 @@ import {
 } from '../scripts/managed-package.mjs'
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
-const VERSION = '1.3.2'
+const VERSION = '1.3.3'
 const PLUGIN = 'dsh-plugin-trace-insight'
 const NPM_COMMAND = 'npm'
 const PNPM_COMMAND = 'pnpm'

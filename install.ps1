@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.3.2'
+$PluginVersion = '1.3.3'
 $DshPackage = '@deepseek-ai/dsh'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
@@ -176,9 +176,9 @@ if (Test-DshRunning) {
   throw 'DSH 正在运行。请先关闭 DSH，再重新运行安装程序。'
 }
 
-if ([string]::IsNullOrWhiteSpace($SourceRoot)
-  -and $null -eq (Get-Command dsh -ErrorAction SilentlyContinue)
-  -and $null -eq (Get-Command npx -ErrorAction SilentlyContinue)) {
+$availableGlobalDsh = Get-Command dsh -ErrorAction SilentlyContinue
+$availableNpx = Get-Command npx -ErrorAction SilentlyContinue
+if ([string]::IsNullOrWhiteSpace($SourceRoot) -and $null -eq $availableGlobalDsh -and $null -eq $availableNpx) {
   throw '未找到全局 dsh 或 npx。'
 }
 $null = Ensure-Pnpm
