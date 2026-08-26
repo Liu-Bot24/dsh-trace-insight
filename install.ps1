@@ -10,11 +10,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$PluginVersion = '1.3.1'
-$SupportedDshVersions = @('0.1.0-rc.7', '0.1.0-rc.8', '0.1.1-rc.1', '0.1.1-rc.2')
+$PluginVersion = '1.3.2'
+$DshPackage = '@deepseek-ai/dsh'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PatchCore = Join-Path $Here 'patches\shell-patch.mjs'
 $PackageCore = Join-Path $Here 'scripts\managed-package.mjs'
+$NpxFinder = Join-Path $Here 'scripts\find-npx-dsh.mjs'
 if (-not [string]::IsNullOrWhiteSpace($PackagePath)) {
   $PackagePath = [System.IO.Path]::GetFullPath($PackagePath)
 }
@@ -86,6 +87,7 @@ function Resolve-DshRunner {
       throw '使用 -SourceRoot 需要 pnpm。请先安装 pnpm 11.7.0。'
     }
     return [pscustomobject]@{
+      Kind = 'source'
       FilePath = $pnpm.Source
       Prefix = @('dsh')
       Display = "pnpm dsh（$resolvedRoot）"
@@ -93,14 +95,26 @@ function Resolve-DshRunner {
     }
   }
 
-  $dsh = Get-Command dsh -ErrorAction SilentlyContinue
-  if ($null -eq $dsh) {
-    throw '未找到全局 dsh。请先全局安装受支持的 DeepSeek Harness，再运行本安装程序。'
+  $globalDsh = Get-Command dsh -ErrorAction SilentlyContinue
+  if ($null -ne $globalDsh) {
+    return [pscustomobject]@{
+      Kind = 'global'
+      FilePath = $globalDsh.Source
+      Prefix = @()
+      Display = $globalDsh.Source
+      WorkingDirectory = $null
+    }
+  }
+
+  $npx = Get-Command npx -ErrorAction SilentlyContinue
+  if ($null -eq $npx) {
+    throw '未找到 npx。请先安装 Node.js 22.19 或更高版本。'
   }
   return [pscustomobject]@{
-    FilePath = $dsh.Source
-    Prefix = @()
-    Display = "$($dsh.Source)"
+    Kind = 'npx'
+    FilePath = $npx.Source
+    Prefix = @('--yes', "--package=$DshPackage", 'dsh')
+    Display = "npx --yes --package=$DshPackage dsh"
     WorkingDirectory = $null
   }
 }
@@ -126,8 +140,9 @@ function Invoke-Dsh {
 
 function Test-DshRunning {
   try {
+    $commandPattern = '(?i)(?:^|[\s"''])(?:(?:[^\s"'']*[\\/])?dsh(?:\.cmd)?|[^\s"'']*@deepseek-ai[\\/]dsh[\\/][^\s"'']+)(?=\s|["'']|$).*?(?:\sweb(?=\s|["'']|$)|--profile\s+web(?=\s|["'']|$))'
     $processes = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-      $_.CommandLine -and $_.CommandLine -match '(?i)(?:dsh(?:\.cmd)?|@deepseek-ai/dsh).*?(?:\sweb(?:\s|$)|--profile\s+web)'
+      $_.CommandLine -and $_.CommandLine -match $commandPattern
     }
     if (@($processes).Count -gt 0) { return $true }
   } catch {}
@@ -161,9 +176,12 @@ if (Test-DshRunning) {
   throw 'DSH 正在运行。请先关闭 DSH，再重新运行安装程序。'
 }
 
-if (-not [string]::IsNullOrWhiteSpace($SourceRoot)) {
-  $null = Ensure-Pnpm
+if ([string]::IsNullOrWhiteSpace($SourceRoot)
+  -and $null -eq (Get-Command dsh -ErrorAction SilentlyContinue)
+  -and $null -eq (Get-Command npx -ErrorAction SilentlyContinue)) {
+  throw '未找到全局 dsh 或 npx。'
 }
+$null = Ensure-Pnpm
 $runner = Resolve-DshRunner
 Write-Host "使用：$($runner.Display)" -ForegroundColor DarkGray
 
@@ -173,16 +191,18 @@ if (-not (Test-Path -LiteralPath $PatchCore -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $PackageCore -PathType Leaf)) {
   throw "缺少持久包安装组件：$PackageCore"
 }
+if (-not (Test-Path -LiteralPath $NpxFinder -PathType Leaf) -and $runner.Kind -eq 'npx') {
+  throw "缺少 npx DSH 定位组件：$NpxFinder"
+}
 $versionOutput = Invoke-Dsh -Runner $runner -Arguments @('--version') -Capture
 $versionText = ($versionOutput -join ' ').Trim()
-if ($SupportedDshVersions -notcontains $versionText) {
-  throw "当前 DSH 是 $versionText；支持的版本是 $($SupportedDshVersions -join '、')。"
-}
 
 if ([string]::IsNullOrWhiteSpace($DshRoot)) {
-  if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
-    $DshRoot = $runner.FilePath
-  } else {
+  if ($runner.Kind -eq 'npx') {
+    $rootOutput = Invoke-Checked -FilePath $runner.FilePath -Arguments @('--yes', "--package=$DshPackage", 'node', $NpxFinder, $versionText) -Capture
+    $DshRoot = ($rootOutput -join [Environment]::NewLine).Trim()
+    $env:DSH_PACKAGE_ROOT = $DshRoot
+  } elseif ($runner.Kind -eq 'source') {
     throw '使用 -SourceRoot 时必须同时提供 -DshRoot。'
   }
 }
@@ -222,15 +242,13 @@ finally {
   }
 }
 
-$statusOutput = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'status') + $patchRootArguments + @('--json')) -Capture
+$statusOutput = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'status-all') + $patchRootArguments + @('--json')) -Capture
 $patchStatus = (($statusOutput -join [Environment]::NewLine) | ConvertFrom-Json)
-if ($patchStatus.state -ne 'original' -and $patchStatus.state -ne 'patched') {
-  throw '当前 DSH 壳层不是可安全安装的状态。'
-}
-$patchWasOriginal = $patchStatus.state -eq 'original'
 
 Write-Step '安装右侧栏'
-$null = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'apply') + $patchRootArguments + @('--json')) -Capture
+$applyOutput = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'apply-all') + $patchRootArguments + @('--json')) -Capture
+$applyResult = (($applyOutput -join [Environment]::NewLine) | ConvertFrom-Json)
+$newlyPatchedRoots = @($applyResult.installations | Where-Object { $_.previousState -eq 'original' } | ForEach-Object { $_.dshRoot })
 $migrationOutput = Invoke-Checked -FilePath $node.Source -Arguments @($PackageCore, 'migrate', '--profile', $Profile, '--package', $managedPackagePath, '--json') -Capture
 $migration = (($migrationOutput -join [Environment]::NewLine) | ConvertFrom-Json)
 $pluginWasInstalled = $migration.state -ne 'profile-not-created' -and $migration.state -ne 'not-installed'
@@ -247,14 +265,27 @@ try {
   }
 } catch {
   $installError = $_
+  $rollbackErrors = [System.Collections.Generic.List[string]]::new()
   if (-not $pluginWasInstalled) {
     try {
       Invoke-Dsh -Runner $runner -Arguments @('plugin', '--profile', $Profile, 'remove', 'dsh-plugin-trace-insight')
       $null = Invoke-Checked -FilePath $node.Source -Arguments @($PackageCore, 'cleanup', '--profile', $Profile) -Capture
-    } catch {}
+    } catch {
+      $rollbackErrors.Add("插件回滚失败：$($_.Exception.Message)")
+    }
   }
-  if ($patchWasOriginal) {
-    try { $null = Invoke-Checked -FilePath $node.Source -Arguments (@($PatchCore, 'restore-active') + $patchRootArguments + @('--json')) -Capture } catch {}
+  if (-not $pluginWasInstalled -and $newlyPatchedRoots.Count -gt 0) {
+    try {
+      $restoreArguments = @($PatchCore, 'restore-all')
+      foreach ($root in $newlyPatchedRoots) { $restoreArguments += @('--dsh-root', $root) }
+      $restoreArguments += '--json'
+      $null = Invoke-Checked -FilePath $node.Source -Arguments $restoreArguments -Capture
+    } catch {
+      $rollbackErrors.Add("右侧栏回滚失败：$($_.Exception.Message)")
+    }
+  }
+  if ($rollbackErrors.Count -gt 0) {
+    throw "安装失败：$($installError.Exception.Message)`n$($rollbackErrors -join [Environment]::NewLine)"
   }
   throw $installError
 }
@@ -272,9 +303,9 @@ if ($StartAfterInstall -and -not $alreadyRunning) {
   }
   Write-Host 'DSH 已在新窗口启动。打开会话后即可使用右侧 Trace Insight。' -ForegroundColor Green
 } elseif ($alreadyRunning) {
-  Write-Host "`n插件已经安装，但检测到 DSH 正在运行。请关闭当前 DSH 终端并用原来的 dsh web 命令重新启动一次；客户端插件清单只在启动时扫描。" -ForegroundColor Yellow
+  Write-Host "`n插件已经安装，但检测到 DSH 正在运行。请关闭当前 DSH 后重新启动一次；客户端插件清单只在启动时扫描。" -ForegroundColor Yellow
 } else {
-  Write-Host "`n安装完成。重新运行 dsh web 后即可使用右侧 Trace Insight。" -ForegroundColor Green
+  Write-Host "`n安装完成。重新启动 DSH 后即可使用右侧 Trace Insight。" -ForegroundColor Green
 }
 
 Write-Host "`n卸载命令：powershell -ExecutionPolicy Bypass -File `"$(Join-Path $Here 'uninstall.ps1')`"" -ForegroundColor DarkGray

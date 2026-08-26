@@ -62,9 +62,9 @@ Compare accepts two successful analyses with the same range and input, then show
 
 ## Installation
 
-A global installation of DeepSeek Harness `0.1.0-rc.7`, `0.1.0-rc.8`, `0.1.1-rc.1`, or `0.1.1-rc.2` and Node.js `22.19.0` or newer are required. Stop DSH before installing.
+Node.js `22.19.0` or newer is required. Global DSH, npx-only DSH, and environments containing both are supported. Stop DSH before installing.
 
-Download or clone this repository, then run the installer from the repository root. The installer checks the current global DSH installation, installs Trace Insight, and adds the right sidebar. Its plugin archive is retained under `<DSH_HOME>/trace-insight/packages`; after installation, DSH does not depend on the source checkout or download directory remaining in place.
+Download or clone this repository, then run the installer from the repository root. The installer installs Trace Insight and adds the right sidebar to every supported DSH installation it finds. Its plugin archive is retained under `<DSH_HOME>/trace-insight/packages`; after installation, DSH does not depend on the source checkout or download directory remaining in place.
 
 ### Windows
 
@@ -84,6 +84,12 @@ Start DSH after installation:
 
 ```shell
 dsh web
+```
+
+If no global `dsh` command is installed, use:
+
+```shell
+npx --yes --package=@deepseek-ai/dsh dsh web
 ```
 
 Open any Session and select **Trace Insight** to open the sidebar.
@@ -176,7 +182,7 @@ Close the DSH terminal or window, then run the installer again.
 
 ### The Trace Insight entry or sidebar is missing
 
-Stop DSH completely, run the installer again, and start DSH. If the entry still does not appear, check whether the plugin is present in the `web` profile.
+Stop DSH completely, run the installer again, and start DSH. If the entry still does not appear, check whether the plugin is present in the `web` profile. For npx-only installations, replace `dsh` below with `npx --yes --package=@deepseek-ai/dsh dsh`.
 
 Windows PowerShell:
 

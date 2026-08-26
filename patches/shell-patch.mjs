@@ -15,9 +15,9 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -39,7 +39,8 @@ export function sha256(path) {
 
 function readJson(path, label = path) {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'))
+    const body = readFileSync(path, 'utf8')
+    return JSON.parse(body.charCodeAt(0) === 0xFEFF ? body.slice(1) : body)
   } catch (error) {
     throw new ShellPatchError(`无法读取 ${label}: ${error.message}`)
   }
@@ -53,8 +54,7 @@ function packageInfo(root, expectedName) {
   return { root: realpathSync(root), version: manifest.version, manifestPath }
 }
 
-function packageRootFromCandidate(candidate) {
-  if (!candidate) return undefined
+function packageRootFromFilesystemLocation(candidate) {
   let start = resolve(candidate)
   if (existsSync(start)) start = realpathSync(start)
   if (existsSync(start) && !statSync(start).isDirectory()) start = dirname(start)
@@ -78,6 +78,36 @@ function packageRootFromCandidate(candidate) {
     const parent = dirname(current)
     if (parent === current) break
     current = parent
+  }
+  return undefined
+}
+
+function commandShimTargets(path) {
+  if (!existsSync(path) || statSync(path).isDirectory() || statSync(path).size > 128 * 1024) return []
+  let body
+  try {
+    body = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+  const targets = new Set()
+  for (const match of body.matchAll(/["']([^"'\r\n]+)["']/gu)) {
+    const value = match[1].trim()
+    if (!value || /%[^%]+%|\$[({A-Za-z_]/u.test(value)) continue
+    const target = isAbsolute(value) ? value : resolve(dirname(path), value)
+    if (existsSync(target)) targets.add(target)
+  }
+  return [...targets]
+}
+
+function packageRootFromCandidate(candidate) {
+  if (!candidate) return undefined
+  const direct = packageRootFromFilesystemLocation(candidate)
+  if (direct) return direct
+  const path = resolve(candidate)
+  for (const target of commandShimTargets(path)) {
+    const root = packageRootFromFilesystemLocation(target)
+    if (root) return root
   }
   return undefined
 }
@@ -106,7 +136,7 @@ function globalNpmCandidate() {
 
 function npxCacheRoots() {
   const roots = new Set()
-  if (process.env.npm_config_cache) roots.add(join(process.env.npm_config_cache, '_npx'))
+  if (process.env.npm_config_cache) return [join(process.env.npm_config_cache, '_npx')]
   if (process.env.LOCALAPPDATA) roots.add(join(process.env.LOCALAPPDATA, 'npm-cache', '_npx'))
   roots.add(join(homedir(), '.npm', '_npx'))
   return [...roots]
@@ -152,44 +182,124 @@ export function probeDshInstallation(dshRoot, manifest = loadShellPatchManifest(
   return { dsh, webApp, layout, versions, target }
 }
 
-export function discoverDshInstallation(manifest = loadShellPatchManifest()) {
-  const raw = [
-    process.env.DSH_PACKAGE_ROOT,
-    ...commandCandidates(),
-    globalNpmCandidate(),
-    ...npxCandidates(),
-  ].filter(Boolean)
-  const roots = new Set()
-  for (const candidate of raw) {
+function installationCandidates(explicitRoots = []) {
+  if (explicitRoots.length > 0) {
+    return explicitRoots.map(candidate => ({ candidate, source: 'explicit', required: true }))
+  }
+  if (process.env.DSH_PACKAGE_ROOT) {
+    return [{ candidate: process.env.DSH_PACKAGE_ROOT, source: 'environment', required: true }]
+  }
+  const globalCandidate = globalNpmCandidate()
+  return [
+    ...commandCandidates().map(candidate => ({ candidate, source: 'path', required: true })),
+    ...(globalCandidate
+      ? [{ candidate: globalCandidate, source: 'npm-global', required: false }]
+      : []),
+    ...npxCandidates().map(candidate => ({ candidate, source: 'npx-cache', required: false })),
+  ]
+}
+
+function rootsFromOptions(options = {}) {
+  const roots = options.dshRoots ?? (options.dshRoot ? [options.dshRoot] : [])
+  return [...new Set(roots.filter(Boolean).map(root => resolve(root)))]
+}
+
+export function discoverDshInstallations(manifest = loadShellPatchManifest(), options = {}) {
+  const records = new Map()
+  const broken = []
+  for (const item of installationCandidates(rootsFromOptions(options))) {
     try {
-      const root = packageRootFromCandidate(candidate)
-      if (root) roots.add(root)
-    } catch {
-      // A stale PATH or npx cache entry is not a usable installation candidate.
+      const root = packageRootFromCandidate(item.candidate)
+      if (!root) {
+        if (item.required) broken.push({ ...item, error: '不是完整的 DSH 安装' })
+        continue
+      }
+      const existing = records.get(root) ?? { root, sources: new Set(), required: false }
+      existing.sources.add(item.source)
+      existing.required ||= item.required
+      records.set(root, existing)
+    } catch (error) {
+      if (item.required) broken.push({ ...item, error: error.message })
     }
   }
 
-  const probes = []
-  for (const root of roots) {
+  let supported = []
+  const unsupported = []
+  for (const record of records.values()) {
     try {
-      probes.push(probeDshInstallation(root, manifest))
-    } catch {
-      // Broken package trees are reported only if no supported installation exists.
+      const probe = probeDshInstallation(record.root, manifest)
+      const result = {
+        ...probe,
+        sources: [...record.sources].sort(),
+        required: record.required,
+      }
+      if (probe.target) supported.push(result)
+      else unsupported.push(result)
+    } catch (error) {
+      const failure = {
+        root: record.root,
+        sources: [...record.sources].sort(),
+        required: record.required,
+        error: error.message,
+      }
+      if (record.required) broken.push(failure)
     }
   }
-  const supported = probes.filter(probe => probe.target !== undefined)
-  if (supported.length === 1) return supported[0]
-  if (supported.length > 1) {
-    throw new ShellPatchError('检测到多个受支持的 DSH 安装；请用 --dsh-root 明确指定正在使用的安装根。', {
-      candidates: supported.map(item => item.dsh.root),
+  const byRoot = (left, right) => left.dsh.root.localeCompare(right.dsh.root)
+  const activeVersions = new Set(supported.filter(item => item.required).map(item => item.versions.dsh))
+  const inactive = activeVersions.size === 0
+    ? []
+    : supported.filter(item => !item.required && !activeVersions.has(item.versions.dsh))
+  if (inactive.length > 0) {
+    supported = supported.filter(item => item.required || activeVersions.has(item.versions.dsh))
+  }
+  supported.sort(byRoot)
+  unsupported.sort(byRoot)
+  inactive.sort(byRoot)
+  return { supported, unsupported, inactive, broken }
+}
+
+function discoveryError(discovery) {
+  const requiredUnsupported = discovery.unsupported.filter(item => item.required)
+  if (discovery.broken.length > 0) {
+    return new ShellPatchError('发现无法完整解析的 DSH 安装；未修改任何文件。', {
+      candidates: discovery.broken,
     })
   }
-  if (probes.length > 0) {
-    throw new ShellPatchError('发现 DSH，但版本组合不受支持；未修改任何文件。', {
-      candidates: probes.map(item => ({ root: item.dsh.root, versions: item.versions })),
+  if (requiredUnsupported.length > 0) {
+    return new ShellPatchError('当前可启动的 DSH 版本组合不受支持；未修改任何文件。', {
+      candidates: requiredUnsupported.map(item => ({
+        root: item.dsh.root,
+        versions: item.versions,
+        sources: item.sources,
+      })),
     })
   }
-  throw new ShellPatchError('无法定位受支持的 DSH 安装；请用 --dsh-root 指定 @deepseek-ai/dsh 包或其安装根。')
+  if (discovery.supported.length === 0) {
+    return new ShellPatchError('无法定位受支持的 DSH 安装；未修改任何文件。', {
+      candidates: discovery.unsupported.map(item => ({
+        root: item.dsh.root,
+        versions: item.versions,
+        sources: item.sources,
+      })),
+    })
+  }
+  return undefined
+}
+
+function supportedProbes(options, manifest) {
+  const discovery = discoverDshInstallations(manifest, options)
+  const error = discoveryError(discovery)
+  if (error) throw error
+  return discovery
+}
+
+export function discoverDshInstallation(manifest = loadShellPatchManifest()) {
+  const discovery = supportedProbes({}, manifest)
+  if (discovery.supported.length === 1) return discovery.supported[0]
+  throw new ShellPatchError('检测到多个受支持的 DSH 安装；请使用批量操作或用 --dsh-root 指定单个安装根。', {
+    candidates: discovery.supported.map(item => item.dsh.root),
+  })
 }
 
 function resolveProbe({ dshRoot, manifest }) {
@@ -243,14 +353,79 @@ function defaultBackupRoot() {
   return join(dshHome, 'trace-insight', 'shell-backups')
 }
 
-function activeStatePath(options = {}) {
+function stateRoot(options = {}) {
+  const backupRoot = resolve(options.backupRoot ?? defaultBackupRoot())
+  return join(dirname(backupRoot), 'shell-patches')
+}
+
+function normalizedPathKey(path) {
+  const absolute = resolve(path)
+  const normalized = (existsSync(absolute) ? realpathSync(absolute) : absolute).normalize('NFC')
+  return process.platform === 'win32' ? normalized.toLocaleLowerCase('en-US') : normalized
+}
+
+function stateKeyForRoot(dshRoot) {
+  return createHash('sha256').update(normalizedPathKey(dshRoot)).digest('hex')
+}
+
+export function activeStatePathForRoot(dshRoot, options = {}) {
   if (options.statePath) return resolve(options.statePath)
+  return join(stateRoot(options), stateKeyForRoot(dshRoot), 'active.json')
+}
+
+function legacyActiveStatePath(options = {}) {
   const backupRoot = resolve(options.backupRoot ?? defaultBackupRoot())
   return join(dirname(backupRoot), 'shell-patch-active.json')
 }
 
+function validateActiveState(state, path) {
+  if (state.schemaVersion !== 1
+    || typeof state.backupDirectory !== 'string'
+    || typeof state.dshRoot !== 'string') {
+    throw new ShellPatchError(`不支持的 active shell patch state: ${path}`)
+  }
+  return state
+}
+
+function readActiveStateForRoot(dshRoot, options = {}) {
+  const path = activeStatePathForRoot(dshRoot, options)
+  if (existsSync(path)) {
+    const state = validateActiveState(readJson(path, 'active shell patch state'), path)
+    if (normalizedPathKey(state.dshRoot) !== normalizedPathKey(dshRoot)) {
+      throw new ShellPatchError(`shell patch state 与安装根不匹配: ${path}`)
+    }
+    return { ...state, statePath: path, legacy: false }
+  }
+  const legacyPath = legacyActiveStatePath(options)
+  if (!existsSync(legacyPath)) return undefined
+  const legacy = validateActiveState(readJson(legacyPath, 'legacy active shell patch state'), legacyPath)
+  if (normalizedPathKey(legacy.dshRoot) !== normalizedPathKey(dshRoot)) return undefined
+  return { ...legacy, statePath: legacyPath, legacy: true }
+}
+
+export function listActiveShellPatchStates(options = {}) {
+  const states = new Map()
+  const root = stateRoot(options)
+  if (existsSync(root)) {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const path = join(root, entry.name, 'active.json')
+      if (!existsSync(path)) continue
+      const state = validateActiveState(readJson(path, 'active shell patch state'), path)
+      states.set(normalizedPathKey(state.dshRoot), { ...state, statePath: path, legacy: false })
+    }
+  }
+  const legacyPath = legacyActiveStatePath(options)
+  if (existsSync(legacyPath)) {
+    const legacy = validateActiveState(readJson(legacyPath, 'legacy active shell patch state'), legacyPath)
+    const key = normalizedPathKey(legacy.dshRoot)
+    if (!states.has(key)) states.set(key, { ...legacy, statePath: legacyPath, legacy: true })
+  }
+  return [...states.values()].sort((left, right) => left.dshRoot.localeCompare(right.dshRoot))
+}
+
 function writeActiveState(state, options = {}) {
-  const path = activeStatePath(options)
+  const path = activeStatePathForRoot(state.dshRoot, options)
   mkdirSync(dirname(path), { recursive: true })
   const stage = `${path}.${randomUUID()}.tmp`
   try {
@@ -259,14 +434,26 @@ function writeActiveState(state, options = {}) {
   } finally {
     if (existsSync(stage)) rmSync(stage, { force: true })
   }
+  const legacyPath = legacyActiveStatePath(options)
+  if (legacyPath !== path && existsSync(legacyPath)) {
+    const legacy = validateActiveState(readJson(legacyPath, 'legacy active shell patch state'), legacyPath)
+    if (normalizedPathKey(legacy.dshRoot) === normalizedPathKey(state.dshRoot)
+      && resolve(legacy.backupDirectory) === resolve(state.backupDirectory)) {
+      rmSync(legacyPath, { force: true })
+    }
+  }
   return path
 }
 
-function clearActiveState(backupDirectory, options = {}) {
-  const path = activeStatePath(options)
-  if (!existsSync(path)) return
-  const state = readJson(path, 'active shell patch state')
-  if (resolve(state.backupDirectory) === resolve(backupDirectory)) rmSync(path, { force: true })
+function clearActiveState(backupDirectory, dshRoot, options = {}) {
+  for (const path of [activeStatePathForRoot(dshRoot, options), legacyActiveStatePath(options)]) {
+    if (!existsSync(path)) continue
+    const state = validateActiveState(readJson(path, 'active shell patch state'), path)
+    if (normalizedPathKey(state.dshRoot) === normalizedPathKey(dshRoot)
+      && resolve(state.backupDirectory) === resolve(backupDirectory)) {
+      rmSync(path, { force: true })
+    }
+  }
 }
 
 function findMatchingBackup(probe, manifest, records, options = {}) {
@@ -402,16 +589,20 @@ export function applyShellPatch(options = {}) {
   const state = stateOf(inspected)
   if (state === 'patched') {
     const backupDirectory = findMatchingBackup(probe, manifest, inspected, options)
-    if (backupDirectory) {
-      writeActiveState({
-        schemaVersion: 1,
-        patchId: manifest.patchId,
-        targetId: probe.target.id,
-        dshRoot: probe.dsh.root,
-        backupDirectory,
+    if (!backupDirectory) {
+      throw new ShellPatchError('右侧栏文件已打补丁，但没有找到可验证的完整原文件备份；为保证可卸载性，未更改状态。', {
+        root: probe.dsh.root,
         versions: probe.versions,
-      }, options)
+      })
     }
+    writeActiveState({
+      schemaVersion: 1,
+      patchId: manifest.patchId,
+      targetId: probe.target.id,
+      dshRoot: probe.dsh.root,
+      backupDirectory,
+      versions: probe.versions,
+    }, options)
     return {
       operation: 'apply',
       state: 'already-patched',
@@ -419,7 +610,7 @@ export function applyShellPatch(options = {}) {
       dshRoot: probe.dsh.root,
       layoutRoot: probe.layout.root,
       versions: probe.versions,
-      ...(backupDirectory ? { backupDirectory } : {}),
+      backupDirectory,
     }
   }
   if (state !== 'original') throw unsupportedStateError(probe, inspected)
@@ -467,7 +658,7 @@ export function applyShellPatch(options = {}) {
     let rollbackError
     try {
       rollbackFromBackup(inspected, backupDirectory)
-      clearActiveState(backupDirectory, options)
+      clearActiveState(backupDirectory, probe.dsh.root, options)
     } catch (failure) {
       rollbackError = failure
     }
@@ -554,7 +745,7 @@ export function restoreShellPatch(backupPath, options = {}) {
     record.preRestoreSha256 = current
   }
   if (records.every(record => record.currentSha256 === record.originalSha256)) {
-    clearActiveState(backupDirectory, options)
+    clearActiveState(backupDirectory, probe.dsh.root, options)
     return {
       operation: 'restore',
       state: 'already-original',
@@ -598,7 +789,7 @@ export function restoreShellPatch(backupPath, options = {}) {
     rmSync(rollbackDirectory, { recursive: true, force: true })
   }
 
-  clearActiveState(backupDirectory, options)
+  clearActiveState(backupDirectory, probe.dsh.root, options)
 
   return {
     operation: 'restore',
@@ -612,17 +803,35 @@ export function restoreShellPatch(backupPath, options = {}) {
 }
 
 export function restoreActiveShellPatch(options = {}) {
-  const path = activeStatePath(options)
-  if (!existsSync(path)) return { operation: 'restore-active', state: 'not-installed' }
-  const state = readJson(path, 'active shell patch state')
-  if (state.schemaVersion !== 1
-    || typeof state.backupDirectory !== 'string'
-    || typeof state.dshRoot !== 'string') {
-    throw new ShellPatchError(`不支持的 active shell patch state: ${path}`)
+  let state
+  if (options.dshRoot) {
+    state = readActiveStateForRoot(options.dshRoot, options)
+  } else {
+    const states = listActiveShellPatchStates(options)
+    if (states.length > 1) {
+      throw new ShellPatchError('存在多个 DSH 安装根的右侧栏状态；请使用 restore-all 或指定 --dsh-root。', {
+        candidates: states.map(item => item.dshRoot),
+      })
+    }
+    state = states[0]
   }
-
   const manifest = options.manifest ?? loadShellPatchManifest(options.manifestPath)
-  const dshRoot = options.dshRoot ?? state.dshRoot
+  const dshRoot = options.dshRoot ?? state?.dshRoot
+  if (!state) {
+    if (!dshRoot) return { operation: 'restore-active', state: 'not-installed' }
+    const probe = resolveProbe({ dshRoot, manifest })
+    const records = inspectRecords(fileRecords(probe, manifest))
+    const currentState = stateOf(records)
+    if (currentState === 'original') return { operation: 'restore-active', state: 'not-installed', dshRoot: probe.dsh.root }
+    if (currentState !== 'patched') throw unsupportedStateError(probe, records)
+    const backupDirectory = findMatchingBackup(probe, manifest, records, options)
+    if (!backupDirectory) {
+      throw new ShellPatchError('右侧栏文件已打补丁，但没有找到可验证的完整原文件备份；拒绝伪造卸载成功。', {
+        root: probe.dsh.root,
+      })
+    }
+    return restoreShellPatch(backupDirectory, { ...options, manifest, dshRoot: probe.dsh.root })
+  }
   const probe = resolveProbe({ dshRoot, manifest })
   const versionChanged = state.versions
     && (state.versions.dsh !== probe.versions.dsh
@@ -640,7 +849,7 @@ export function restoreActiveShellPatch(options = {}) {
         state: currentState,
       })
     }
-    clearActiveState(state.backupDirectory, options)
+    clearActiveState(state.backupDirectory, probe.dsh.root, options)
     return {
       operation: 'restore-active',
       state: 'superseded-by-upgrade',
@@ -656,6 +865,213 @@ export function restoreActiveShellPatch(options = {}) {
     manifest,
     dshRoot,
   })
+}
+
+function ignoredUnsupported(discovery) {
+  return discovery.unsupported
+    .filter(item => !item.required)
+    .map(item => ({ root: item.dsh.root, versions: item.versions, sources: item.sources }))
+}
+
+function ignoredInactive(discovery) {
+  return discovery.inactive.map(item => ({ root: item.dsh.root, versions: item.versions, sources: item.sources }))
+}
+
+function inspectProbe(probe, manifest) {
+  const records = fileRecords(probe, manifest)
+  verifyPayloads(records)
+  const inspected = inspectRecords(records)
+  return { probe, records: inspected, state: stateOf(inspected) }
+}
+
+export function inspectAllShellPatches(options = {}) {
+  const manifest = options.manifest ?? loadShellPatchManifest(options.manifestPath)
+  const discovery = supportedProbes(options, manifest)
+  const installations = discovery.supported.map(probe => {
+    const inspected = inspectProbe(probe, manifest)
+    return {
+      state: inspected.state,
+      targetId: probe.target.id,
+      dshRoot: probe.dsh.root,
+      layoutRoot: probe.layout.root,
+      versions: probe.versions,
+      sources: probe.sources,
+    }
+  })
+  return {
+    operation: 'status-all',
+    state: installations.every(item => item.state === 'patched')
+      ? 'patched'
+      : installations.every(item => item.state === 'original')
+        ? 'original'
+        : 'mixed',
+    installations,
+    ignoredUnsupported: ignoredUnsupported(discovery),
+    ignoredInactive: ignoredInactive(discovery),
+  }
+}
+
+export function applyAllShellPatches(options = {}) {
+  const manifest = options.manifest ?? loadShellPatchManifest(options.manifestPath)
+  const discovery = supportedProbes(options, manifest)
+  const plans = discovery.supported.map(probe => inspectProbe(probe, manifest))
+  for (const plan of plans) {
+    if (plan.state === 'unexpected') throw unsupportedStateError(plan.probe, plan.records)
+    if (plan.state === 'patched' && !findMatchingBackup(plan.probe, manifest, plan.records, options)) {
+      throw new ShellPatchError('至少一个 DSH 安装根已打补丁，但没有可验证的原文件备份；未修改任何安装根。', {
+        root: plan.probe.dsh.root,
+      })
+    }
+  }
+
+  const results = []
+  const newlyPatched = []
+  try {
+    for (const plan of plans) {
+      const result = applyShellPatch({ ...options, manifest, dshRoot: plan.probe.dsh.root })
+      results.push({ ...result, previousState: plan.state })
+      if (plan.state === 'original') newlyPatched.push(plan.probe.dsh.root)
+    }
+  } catch (error) {
+    const rollbackFailures = []
+    for (const dshRoot of newlyPatched.reverse()) {
+      try {
+        restoreActiveShellPatch({ ...options, manifest, dshRoot })
+      } catch (failure) {
+        rollbackFailures.push({ dshRoot, error: failure.message })
+      }
+    }
+    if (rollbackFailures.length > 0) {
+      throw new ShellPatchError('多安装根补丁失败，且至少一个已修改根无法自动回滚。', {
+        cause: error.message,
+        rollbackFailures,
+      })
+    }
+    throw new ShellPatchError('多安装根补丁失败，已将本次修改的安装根全部恢复。', { cause: error.message })
+  }
+  return {
+    operation: 'apply-all',
+    state: results.every(item => item.state === 'already-patched') ? 'already-patched' : 'patched',
+    installations: results,
+    ignoredUnsupported: ignoredUnsupported(discovery),
+    ignoredInactive: ignoredInactive(discovery),
+  }
+}
+
+function restoreDiscovery(options, manifest) {
+  const explicit = rootsFromOptions(options)
+  const discovery = discoverDshInstallations(manifest, options)
+  const activeStates = listActiveShellPatchStates(options)
+  const requiredUnsupported = discovery.unsupported.filter(item => item.required)
+  if (discovery.broken.length > 0 || requiredUnsupported.length > 0) {
+    throw discoveryError(discovery)
+  }
+  const probes = new Map(discovery.supported.map(probe => [normalizedPathKey(probe.dsh.root), probe]))
+  if (explicit.length === 0) {
+    for (const state of activeStates) {
+      const key = normalizedPathKey(state.dshRoot)
+      if (probes.has(key)) continue
+      try {
+        const probe = probeDshInstallation(state.dshRoot, manifest)
+        if (!probe.target) {
+          throw new ShellPatchError('已记录的 DSH 安装根版本组合不受支持；未修改任何文件。', {
+            root: state.dshRoot,
+            versions: probe.versions,
+          })
+        }
+        probes.set(key, probe)
+      } catch (error) {
+        if (error instanceof ShellPatchError) throw error
+        throw new ShellPatchError('已记录的 DSH 安装根不可用；保留状态和备份，未修改任何文件。', {
+          root: state.dshRoot,
+          error: error.message,
+        })
+      }
+    }
+  }
+  return {
+    probes: [...probes.values()].sort((left, right) => left.dsh.root.localeCompare(right.dsh.root)),
+    discovery,
+    activeStates,
+  }
+}
+
+export function restoreAllShellPatches(options = {}) {
+  const manifest = options.manifest ?? loadShellPatchManifest(options.manifestPath)
+  const { probes, discovery, activeStates } = restoreDiscovery(options, manifest)
+  if (probes.length === 0 && activeStates.length === 0) {
+    return {
+      operation: 'restore-all',
+      state: 'not-installed',
+      installations: [],
+      ignoredUnsupported: ignoredUnsupported(discovery),
+      ignoredInactive: ignoredInactive(discovery),
+    }
+  }
+  const activeByRoot = new Map(activeStates.map(state => [normalizedPathKey(state.dshRoot), state]))
+  const plans = probes.map(probe => {
+    const inspected = inspectProbe(probe, manifest)
+    if (inspected.state === 'unexpected') throw unsupportedStateError(probe, inspected.records)
+    const active = activeByRoot.get(normalizedPathKey(probe.dsh.root))
+    const backupDirectory = inspected.state === 'patched'
+      ? findMatchingBackup(probe, manifest, inspected.records, options)
+      : active?.backupDirectory
+    if (inspected.state === 'patched' && !backupDirectory) {
+      throw new ShellPatchError('右侧栏文件已打补丁，但没有可验证的原文件备份；未修改任何安装根。', {
+        root: probe.dsh.root,
+      })
+    }
+    return { ...inspected, active, backupDirectory }
+  })
+
+  const results = []
+  const restoredRoots = []
+  try {
+    for (const plan of plans) {
+      if (plan.state === 'patched') {
+        const result = restoreShellPatch(plan.backupDirectory, {
+          ...options,
+          manifest,
+          dshRoot: plan.probe.dsh.root,
+        })
+        results.push(result)
+        restoredRoots.push(plan.probe.dsh.root)
+      } else {
+        if (plan.active) clearActiveState(plan.active.backupDirectory, plan.probe.dsh.root, options)
+        results.push({
+          operation: 'restore',
+          state: 'already-original',
+          dshRoot: plan.probe.dsh.root,
+          layoutRoot: plan.probe.layout.root,
+          versions: plan.probe.versions,
+          ...(plan.backupDirectory ? { backupDirectory: plan.backupDirectory } : {}),
+        })
+      }
+    }
+  } catch (error) {
+    const rollbackFailures = []
+    for (const dshRoot of restoredRoots.reverse()) {
+      try {
+        applyShellPatch({ ...options, manifest, dshRoot })
+      } catch (failure) {
+        rollbackFailures.push({ dshRoot, error: failure.message })
+      }
+    }
+    if (rollbackFailures.length > 0) {
+      throw new ShellPatchError('多安装根恢复失败，且至少一个已恢复根无法回到补丁状态。', {
+        cause: error.message,
+        rollbackFailures,
+      })
+    }
+    throw new ShellPatchError('多安装根恢复失败，已将先前恢复的根全部回到补丁状态。', { cause: error.message })
+  }
+  return {
+    operation: 'restore-all',
+    state: results.some(item => item.state === 'restored') ? 'restored' : 'already-original',
+    installations: results,
+    ignoredUnsupported: ignoredUnsupported(discovery),
+    ignoredInactive: ignoredInactive(discovery),
+  }
 }
 
 function parseArgs(argv) {
@@ -679,17 +1095,31 @@ function parseArgs(argv) {
     }
     const value = args.shift()
     if (!value) throw new ShellPatchError(`${flag} 缺少参数。`)
-    if (flag === '--dsh-root') options.dshRoot = value
+    if (flag === '--dsh-root') {
+      options.dshRoots ??= []
+      options.dshRoots.push(value)
+      options.dshRoot = value
+    }
     else if (flag === '--backup-root') options.backupRoot = value
     else options.manifestPath = value
   }
-  if (!['apply', 'status', 'restore', 'restore-active'].includes(command)) throw new ShellPatchError(`未知操作: ${command}`)
+  if (!['apply', 'apply-all', 'status', 'status-all', 'discover', 'restore', 'restore-active', 'restore-all'].includes(command)) {
+    throw new ShellPatchError(`未知操作: ${command}`)
+  }
+  if (['apply', 'status', 'restore', 'restore-active'].includes(command) && options.dshRoots?.length > 1) {
+    throw new ShellPatchError(`${command} 只接受一个 --dsh-root；多根请使用对应的 -all 操作。`)
+  }
   return { command, restorePath, options }
 }
 
 function printResult(result, json) {
   if (json) {
     process.stdout.write(`${JSON.stringify(result)}\n`)
+    return
+  }
+  if (result.operation === 'apply-all' || result.operation === 'restore-all' || result.operation === 'status-all') {
+    process.stdout.write(`${result.operation}: ${result.state}\n`)
+    for (const item of result.installations) process.stdout.write(`DSH: ${item.dshRoot} (${item.state})\n`)
     return
   }
   if (result.operation === 'restore-active' && result.state === 'not-installed') {
@@ -728,11 +1158,19 @@ function cli() {
     const { command, restorePath, options } = parseArgs(process.argv.slice(2))
     const result = command === 'apply'
       ? applyShellPatch(options)
-      : command === 'status'
-        ? inspectShellPatch(options)
-        : command === 'restore'
-          ? restoreShellPatch(restorePath, options)
-          : restoreActiveShellPatch(options)
+      : command === 'apply-all'
+        ? applyAllShellPatches(options)
+        : command === 'status'
+          ? inspectShellPatch(options)
+          : command === 'status-all'
+            ? inspectAllShellPatches(options)
+            : command === 'discover'
+              ? discoverDshInstallations(loadShellPatchManifest(options.manifestPath), options)
+              : command === 'restore'
+                ? restoreShellPatch(restorePath, options)
+                : command === 'restore-active'
+                  ? restoreActiveShellPatch(options)
+                  : restoreAllShellPatches(options)
     printResult(result, options.json)
   } catch (error) {
     const body = error instanceof ShellPatchError
@@ -747,4 +1185,5 @@ function cli() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) cli()
+if (process.argv[1]
+  && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) cli()

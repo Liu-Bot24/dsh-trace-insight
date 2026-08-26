@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
@@ -8,12 +9,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, relative } from 'node:path'
+import { basename, delimiter, dirname, join, relative } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -29,7 +31,7 @@ import {
 } from '../scripts/managed-package.mjs'
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
-const VERSION = '1.3.1'
+const VERSION = '1.3.2'
 const PLUGIN = 'dsh-plugin-trace-insight'
 const NPM_COMMAND = 'npm'
 const PNPM_COMMAND = 'pnpm'
@@ -238,19 +240,19 @@ function copyInstallMedia(target, { install = true, uninstall = true } = {}) {
   }
 }
 
-function createPatchedDshTree(installRoot) {
+function createOriginalDshTree(installRoot, version = '0.1.1-rc.2') {
   const dshRoot = join(installRoot, 'node_modules', '@deepseek-ai', 'dsh')
   const webAppRoot = join(dshRoot, 'node_modules', '@deepseek-ai', 'dsh-web-app')
   const layoutRoot = join(dshRoot, 'node_modules', '@deepseek-ai', 'dsh-client-ui-layout')
-  writeJson(join(dshRoot, 'package.json'), { name: '@deepseek-ai/dsh', version: '0.1.1-rc.2' })
+  writeJson(join(dshRoot, 'package.json'), { name: '@deepseek-ai/dsh', version })
   writeJson(join(webAppRoot, 'package.json'), {
     name: '@deepseek-ai/dsh-web-app',
-    version: '0.1.1-rc.2',
+    version,
     exports: { './package.json': './package.json' },
   })
   writeJson(join(layoutRoot, 'package.json'), {
     name: '@deepseek-ai/dsh-client-ui-layout',
-    version: '0.1.1-rc.2',
+    version,
     exports: { './package.json': './package.json' },
   })
   const targets = [
@@ -260,12 +262,41 @@ function createPatchedDshTree(installRoot) {
     ['stores.d.ts', 'lib/types/client/stores.d.ts'],
     ['AppFrame.d.ts', 'lib/types/client/AppFrame.d.ts'],
   ]
+  const originals = {}
+  const patched = {}
   for (const [payload, target] of targets) {
     const targetPath = join(layoutRoot, target)
     mkdirSync(dirname(targetPath), { recursive: true })
-    copyFileSync(join(ROOT, 'patches', 'dsh-client-ui-layout', payload), targetPath)
+    const original = `synthetic original:${payload}\n`
+    const replacement = `synthetic patched:${payload}\n`
+    writeFileSync(targetPath, original)
+    originals[payload] = createHash('sha256').update(original).digest('hex')
+    patched[payload] = createHash('sha256').update(replacement).digest('hex')
   }
-  return dshRoot
+  return { dshRoot, layoutRoot, targets, originals, patched, version }
+}
+
+function configureSyntheticShellPatch(mediaRoot, tree, additionalTrees = []) {
+  const files = tree.targets.map(([name, target]) => {
+    const payload = join('dsh-client-ui-layout', name)
+    const payloadPath = join(mediaRoot, 'patches', payload)
+    mkdirSync(dirname(payloadPath), { recursive: true })
+    writeFileSync(payloadPath, `synthetic patched:${name}\n`)
+    return { name, target, payload, patchedSha256: tree.patched[name] }
+  })
+  writeJson(join(mediaRoot, 'patches', 'shell-patch-manifest.json'), {
+    schemaVersion: 1,
+    patchId: 'synthetic-installer-lifecycle',
+    targetPackage: '@deepseek-ai/dsh-client-ui-layout',
+    files,
+    targets: [tree, ...additionalTrees].map((targetTree, index) => ({
+      id: `synthetic-${index}-${targetTree.version}`,
+      dshVersions: [targetTree.version],
+      webAppVersions: [targetTree.version],
+      layoutVersion: targetTree.version,
+      originalSha256: targetTree.originals,
+    })),
+  })
 }
 
 const FAKE_DSH = String.raw`#!/usr/bin/env node
@@ -286,7 +317,9 @@ function readManifest() {
 }
 function writeManifest(value) {
   fs.mkdirSync(profileRoot, { recursive: true })
-  fs.writeFileSync(manifestPath, JSON.stringify(value, null, 2) + '\n')
+  const stage = manifestPath + '.' + process.pid + '.tmp'
+  fs.writeFileSync(stage, JSON.stringify(value, null, 2) + '\n')
+  fs.renameSync(stage, manifestPath)
 }
 function fromFileSpec(spec) {
   let value = decodeURIComponent(spec.slice('file:'.length))
@@ -360,6 +393,34 @@ function createFakeCommand(path, body) {
   chmodSync(path, 0o755)
 }
 
+function shellDoubleQuote(value) {
+  return `"${String(value).replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('$', '\\$').replaceAll('`', '\\`')}"`
+}
+
+function createToolShims(fakeBin, { fakeDsh, activeNpxBin, globalRoot }) {
+  const npmPath = spawnSync('which', ['npm'], { encoding: 'utf8' }).stdout.trim()
+  assert.ok(npmPath)
+  createFakeCommand(join(fakeBin, 'node'), `#!/bin/sh\nexec ${shellDoubleQuote(process.execPath)} "$@"\n`)
+  createFakeCommand(join(fakeBin, 'npm'), `#!/bin/sh
+if [ "$1" = "root" ] && [ "$2" = "--global" ]; then
+  printf '%s\\n' ${shellDoubleQuote(globalRoot)}
+  exit 0
+fi
+exec ${shellDoubleQuote(npmPath)} "$@"
+`)
+  createFakeCommand(join(fakeBin, 'npx'), `#!/bin/sh
+shift 2
+tool="$1"
+shift
+if [ "$tool" = "dsh" ]; then exec ${shellDoubleQuote(fakeDsh)} "$@"; fi
+if [ "$tool" = "node" ]; then PATH=${shellDoubleQuote(`${activeNpxBin}:${fakeBin}:/usr/bin:/bin`)} exec ${shellDoubleQuote(process.execPath)} "$@"; fi
+echo "unsupported fake npx tool: $tool" >&2
+exit 49
+`)
+  createFakeCommand(join(fakeBin, 'lsof'), '#!/bin/sh\nexit 1\n')
+  createFakeCommand(join(fakeBin, 'pgrep'), '#!/bin/sh\nexit 1\n')
+}
+
 function run(command, args, options) {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options })
   return { ...result, combined: `${result.stdout ?? ''}${result.stderr ?? ''}` }
@@ -377,9 +438,11 @@ test('shell installer migrates a missing external file reference and survives so
   try {
     const installRoot = join(root, 'fake DSH installation')
     const fakeBin = join(installRoot, 'bin')
-    const dshRoot = createPatchedDshTree(installRoot)
+    const tree = createOriginalDshTree(installRoot)
+    const dshRoot = tree.dshRoot
     mkdirSync(fakeBin, { recursive: true })
     createFakeCommand(join(fakeBin, 'dsh'), FAKE_DSH)
+    createFakeCommand(join(fakeBin, 'npx'), `#!/bin/sh\nshift 3\nexec "${join(fakeBin, 'dsh')}" "$@"\n`)
     createFakeCommand(join(fakeBin, 'lsof'), '#!/bin/sh\nexit 1\n')
     createFakeCommand(join(fakeBin, 'pgrep'), '#!/bin/sh\nexit 1\n')
 
@@ -393,6 +456,8 @@ test('shell installer migrates a missing external file reference and survives so
     const uninstallMedia = join(root, 'separate uninstall media with spaces')
     copyInstallMedia(source)
     copyInstallMedia(uninstallMedia, { install: false, uninstall: true })
+    configureSyntheticShellPatch(source, tree)
+    configureSyntheticShellPatch(uninstallMedia, tree)
     const environment = {
       ...process.env,
       DSH_HOME: dshHome,
@@ -408,12 +473,15 @@ test('shell installer migrates a missing external file reference and survives so
       'status', '--dsh-root', dshRoot, '--json',
     ], { cwd: source, env: environment })
     assert.equal(initialPatch.status, 0, initialPatch.combined)
-    assert.equal(JSON.parse(initialPatch.stdout).state, 'patched')
+    assert.equal(JSON.parse(initialPatch.stdout).state, 'original')
 
     const first = run('bash', [join(source, 'install.sh')], { cwd: source, env: environment })
     assert.equal(first.status, 0, first.combined)
     const second = run('bash', [join(source, 'install.sh')], { cwd: source, env: environment })
     assert.equal(second.status, 0, second.combined)
+    for (const [name, target] of tree.targets) {
+      assert.equal(createHash('sha256').update(readFileSync(join(tree.layoutRoot, target))).digest('hex'), tree.patched[name])
+    }
 
     const stable = join(dshHome, 'trace-insight', 'packages', `${PLUGIN}-${VERSION}.tgz`)
     assert.ok(existsSync(stable))
@@ -449,6 +517,9 @@ test('shell installer migrates a missing external file reference and survives so
     assert.notEqual(failedRemove.status, 0)
     assert.ok(existsSync(stable))
     assert.ok(JSON.parse(readFileSync(join(profileRoot, 'package.json'), 'utf8')).dependencies[PLUGIN])
+    for (const [name, target] of tree.targets) {
+      assert.equal(createHash('sha256').update(readFileSync(join(tree.layoutRoot, target))).digest('hex'), tree.patched[name])
+    }
 
     const removed = run('bash', [join(uninstallMedia, 'uninstall.sh')], { cwd: uninstallMedia, env: environment })
     assert.equal(removed.status, 0, removed.combined)
@@ -456,6 +527,9 @@ test('shell installer migrates a missing external file reference and survives so
     assert.equal(finalManifest.dependencies[PLUGIN], undefined)
     assert.ok(finalManifest.dependencies['other-local-plugin'])
     assert.equal(existsSync(stable), false)
+    for (const [name, target] of tree.targets) {
+      assert.equal(createHash('sha256').update(readFileSync(join(tree.layoutRoot, target))).digest('hex'), tree.originals[name])
+    }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -484,5 +558,127 @@ test('Shell and PowerShell entrypoints use the shared persistent lifecycle in th
     const remove = body.indexOf('remove')
     const cleanup = body.indexOf('cleanup')
     assert.ok(remove >= 0 && cleanup > remove, `${name} cleanup must follow successful removal`)
+  }
+})
+
+test('shell lifecycle works with npx only and with global plus npx roots without cross-root state loss', {
+  skip: process.platform === 'win32',
+}, () => {
+  for (const mode of ['npx-only', 'global-and-npx']) {
+    const root = mkdtempSync(join(tmpdir(), `trace insight ${mode} `))
+    try {
+      const media = join(root, 'installer media with spaces')
+      const dshHome = join(root, 'DSH HOME with spaces')
+      const cacheRoot = join(root, 'npm cache with spaces')
+      const npxInstallRoot = join(cacheRoot, '_npx', 'active')
+      const npxTree = createOriginalDshTree(npxInstallRoot)
+      const staleNpxTree = mode === 'global-and-npx'
+        ? createOriginalDshTree(join(cacheRoot, '_npx', 'stale-old-version'), '0.1.0-rc.7')
+        : undefined
+      const activeNpxBin = join(npxInstallRoot, 'node_modules', '.bin')
+      mkdirSync(activeNpxBin, { recursive: true })
+
+      const globalTree = mode === 'global-and-npx'
+        ? createOriginalDshTree(join(root, 'global DSH installation'))
+        : undefined
+      copyInstallMedia(media)
+      configureSyntheticShellPatch(media, npxTree, staleNpxTree ? [staleNpxTree] : [])
+
+      const fakeBin = join(root, 'command shims')
+      const hiddenBin = join(root, 'hidden commands')
+      mkdirSync(fakeBin, { recursive: true })
+      mkdirSync(hiddenBin, { recursive: true })
+      const fakeDsh = join(hiddenBin, 'dsh-handler')
+      createFakeCommand(fakeDsh, FAKE_DSH)
+      createToolShims(fakeBin, {
+        fakeDsh,
+        activeNpxBin,
+        globalRoot: join(root, 'empty npm global root'),
+      })
+      const globalBin = globalTree ? join(root, 'global DSH installation', 'bin') : undefined
+      if (globalBin) {
+        mkdirSync(globalBin, { recursive: true })
+        createFakeCommand(join(globalBin, 'dsh'), FAKE_DSH)
+      }
+
+      const environment = {
+        ...process.env,
+        DSH_HOME: dshHome,
+        PATH: `${globalBin ? `${globalBin}${delimiter}` : ''}${fakeBin}${delimiter}/usr/bin${delimiter}/bin`,
+        TMPDIR: join(root, 'temporary files with spaces'),
+        npm_config_cache: cacheRoot,
+      }
+      delete environment.DSH_PACKAGE_ROOT
+      mkdirSync(environment.TMPDIR, { recursive: true })
+
+      if (staleNpxTree) {
+        const discovered = run(process.execPath, [join(media, 'patches', 'shell-patch.mjs'), 'status-all', '--json'], {
+          cwd: media,
+          env: environment,
+        })
+        assert.equal(discovered.status, 0, discovered.combined)
+        const status = JSON.parse(discovered.stdout)
+        assert.equal(status.installations.length, 2)
+        assert.deepEqual(status.ignoredInactive.map(item => item.root), [realpathSync(staleNpxTree.dshRoot)])
+      }
+
+      const failedFresh = run('bash', [join(media, 'install.sh')], {
+        cwd: media,
+        env: { ...environment, FAKE_DSH_ADD_FAIL: '1' },
+      })
+      assert.notEqual(failedFresh.status, 0, `${mode} fresh failure must be reported`)
+      for (const tree of (globalTree ? [globalTree, npxTree] : [npxTree])) {
+        for (const [name, target] of tree.targets) {
+          assert.equal(
+            createHash('sha256').update(readFileSync(join(tree.layoutRoot, target))).digest('hex'),
+            tree.originals[name],
+            `${mode} fresh failure restored ${name}`,
+          )
+        }
+      }
+
+      const first = run('bash', [join(media, 'install.sh')], { cwd: media, env: environment })
+      assert.equal(first.status, 0, `${mode}: ${first.combined}`)
+      const second = run('bash', [join(media, 'install.sh')], { cwd: media, env: environment })
+      assert.equal(second.status, 0, `${mode} repeat: ${second.combined}`)
+
+      const trees = globalTree ? [globalTree, npxTree] : [npxTree]
+      for (const tree of trees) {
+        for (const [name, target] of tree.targets) {
+          assert.equal(
+            createHash('sha256').update(readFileSync(join(tree.layoutRoot, target))).digest('hex'),
+            tree.patched[name],
+            `${mode} patched ${name}`,
+          )
+        }
+      }
+      const stateRoot = join(dshHome, 'trace-insight', 'shell-patches')
+      assert.equal(readdirSync(stateRoot).filter(name => existsSync(join(stateRoot, name, 'active.json'))).length, trees.length)
+      if (staleNpxTree) {
+        for (const [name, target] of staleNpxTree.targets) {
+          assert.equal(
+            createHash('sha256').update(readFileSync(join(staleNpxTree.layoutRoot, target))).digest('hex'),
+            staleNpxTree.originals[name],
+            `inactive cache preserved ${name}`,
+          )
+        }
+      }
+
+      const removed = run('bash', [join(media, 'uninstall.sh')], { cwd: media, env: environment })
+      assert.equal(removed.status, 0, `${mode} uninstall: ${removed.combined}`)
+      for (const tree of trees) {
+        for (const [name, target] of tree.targets) {
+          assert.equal(
+            createHash('sha256').update(readFileSync(join(tree.layoutRoot, target))).digest('hex'),
+            tree.originals[name],
+            `${mode} restored ${name}`,
+          )
+        }
+      }
+      const removedAgain = run('bash', [join(media, 'uninstall.sh')], { cwd: media, env: environment })
+      assert.equal(removedAgain.status, 0, `${mode} repeated uninstall: ${removedAgain.combined}`)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   }
 })

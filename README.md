@@ -62,9 +62,9 @@ DSH 的对话或轨迹保留在左侧，Trace Insight 显示在可调整宽度�
 
 ## 安装
 
-需要全局安装 DeepSeek Harness `0.1.0-rc.7`、`0.1.0-rc.8`、`0.1.1-rc.1` 或 `0.1.1-rc.2`，并使用 Node.js `22.19.0` 或更高版本。安装前请关闭正在运行的 DSH。
+需要 Node.js `22.19.0` 或更高版本。支持全局 DSH、仅通过 `npx` 使用 DSH，以及两者同时存在的环境。安装前请关闭正在运行的 DSH。
 
-下载或克隆本仓库后，在仓库根目录执行对应的安装程序。安装程序会检查当前全局 DSH、安装 Trace Insight，并接入右侧栏。安装所需的插件包会保存在 `<DSH_HOME>/trace-insight/packages`；安装完成后，DSH 不依赖源码目录或下载目录继续存在。
+下载或克隆本仓库后，在仓库根目录执行对应的安装程序。安装程序会安装 Trace Insight，并为发现的每个受支持 DSH 安装接入右侧栏。安装所需的插件包会保存在 `<DSH_HOME>/trace-insight/packages`；安装完成后，DSH 不依赖源码目录或下载目录继续存在。
 
 ### Windows
 
@@ -84,6 +84,12 @@ bash ./install.sh
 
 ```shell
 dsh web
+```
+
+如果没有全局 `dsh` 命令，使用：
+
+```shell
+npx --yes --package=@deepseek-ai/dsh dsh web
 ```
 
 打开任意会话后，点击 **解读** 即可打开右侧栏。
@@ -176,7 +182,7 @@ bash ./uninstall.sh
 
 ### 看不到“解读”入口或右侧栏
 
-先完全关闭 DSH，再重新运行安装程序并启动 DSH。如果入口仍未出现，可以检查插件是否进入 `web` profile：
+先完全关闭 DSH，再重新运行安装程序并启动 DSH。如果入口仍未出现，可以检查插件是否进入 `web` profile。仅使用 npx 时，将下面命令中的 `dsh` 替换为 `npx --yes --package=@deepseek-ai/dsh dsh`：
 
 Windows PowerShell：
 

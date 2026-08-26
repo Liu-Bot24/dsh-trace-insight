@@ -17,10 +17,14 @@ import test from 'node:test'
 
 import {
   ShellPatchError,
+  activeStatePathForRoot,
+  applyAllShellPatches,
   applyShellPatch,
   inspectShellPatch,
+  listActiveShellPatchStates,
   loadShellPatchManifest,
   restoreActiveShellPatch,
+  restoreAllShellPatches,
   restoreShellPatch,
   sha256,
 } from '../patches/shell-patch.mjs'
@@ -116,7 +120,10 @@ test('shared patcher applies, reports idempotently, and restores every file', ()
     })
     assert.equal(applied.state, 'patched')
     assert.ok(existsSync(join(applied.backupDirectory, 'manifest.json')))
-    assert.ok(existsSync(join(subject.root, 'shell-patch-active.json')))
+    const activeStates = listActiveShellPatchStates({ backupRoot: subject.backupRoot })
+    assert.equal(activeStates.length, 1, JSON.stringify(activeStates))
+    assert.ok(existsSync(activeStates[0].statePath))
+    assert.equal(activeStates[0].statePath, activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot }))
     for (const [name, target] of FILES) {
       assert.equal(sha256(join(subject.layoutRoot, target)), subject.patched[name])
       assert.equal(sha256(join(applied.backupDirectory, name)), subject.originals[name])
@@ -136,7 +143,7 @@ test('shared patcher applies, reports idempotently, and restores every file', ()
       backupRoot: subject.backupRoot,
     })
     assert.equal(restored.state, 'restored')
-    assert.equal(existsSync(join(subject.root, 'shell-patch-active.json')), false)
+    assert.equal(existsSync(activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot })), false)
     for (const [name, target] of FILES) {
       assert.equal(sha256(join(subject.layoutRoot, target)), subject.originals[name])
     }
@@ -168,7 +175,7 @@ test('an already patched install reconnects to its exact backup before uninstall
       manifest: subject.manifest,
       backupRoot: subject.backupRoot,
     })
-    rmSync(join(subject.root, 'shell-patch-active.json'))
+    rmSync(activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot }))
 
     const adopted = applyShellPatch({
       dshRoot: subject.dshRoot,
@@ -177,7 +184,7 @@ test('an already patched install reconnects to its exact backup before uninstall
     })
     assert.equal(adopted.state, 'already-patched')
     assert.equal(adopted.backupDirectory, applied.backupDirectory)
-    assert.ok(existsSync(join(subject.root, 'shell-patch-active.json')))
+    assert.ok(existsSync(activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot })))
 
     const restored = restoreActiveShellPatch({
       manifest: subject.manifest,
@@ -230,7 +237,7 @@ test('an exact supported DSH upgrade clears a stale active backup only after see
     })
     assert.equal(result.state, 'superseded-by-upgrade')
     assert.equal(result.targetId, 'synthetic-target-2')
-    assert.equal(existsSync(join(subject.root, 'shell-patch-active.json')), false)
+    assert.equal(existsSync(activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot })), false)
     for (const [name, target] of FILES) {
       assert.equal(sha256(join(subject.layoutRoot, target)), nextOriginals[name])
     }
@@ -302,7 +309,7 @@ test('a mid-transaction replacement failure restores the original hashes', () =>
     for (const [name, target] of FILES) {
       assert.equal(sha256(join(subject.layoutRoot, target)), subject.originals[name])
     }
-    assert.equal(existsSync(join(subject.root, 'shell-patch-active.json')), false)
+    assert.equal(existsSync(activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot })), false)
   } finally {
     subject.cleanup()
   }
@@ -414,6 +421,46 @@ test('an npm command shim resolves to the exact adjacent DSH package tree', () =
   }
 })
 
+test('a Windows command wrapper resolves an absolute DSH bin target outside the shim directory', () => {
+  const subject = fixture()
+  try {
+    const launcher = join(subject.installRoot, 'runtime', 'node.exe')
+    mkdirSync(dirname(launcher), { recursive: true })
+    writeFileSync(launcher, '')
+    writeFileSync(join(subject.installRoot, 'package.json'), '\uFEFF{"name":"dsh-launcher","private":true}\n')
+    const bin = join(subject.dshRoot, 'lib', 'bin.js')
+    mkdirSync(dirname(bin), { recursive: true })
+    writeFileSync(bin, '#!/usr/bin/env node\n')
+    const wrapperRoot = join(subject.root, 'unrelated global command directory')
+    const shim = join(wrapperRoot, 'dsh.cmd')
+    mkdirSync(wrapperRoot, { recursive: true })
+    writeFileSync(shim, `@"${launcher}" "${bin}" %*\n`)
+    const result = inspectShellPatch({ dshRoot: shim, manifest: subject.manifest })
+    assert.equal(result.state, 'original')
+    assert.equal(result.dshRoot, realpathSync(subject.dshRoot))
+  } finally {
+    subject.cleanup()
+  }
+})
+
+test('a command wrapper pointing outside a DSH package is not accepted as an installation', () => {
+  const subject = fixture()
+  try {
+    const unrelated = join(subject.root, 'unrelated tool', 'bin.js')
+    mkdirSync(dirname(unrelated), { recursive: true })
+    writeFileSync(unrelated, '#!/usr/bin/env node\n')
+    const shim = join(subject.root, 'global commands', 'dsh.cmd')
+    mkdirSync(dirname(shim), { recursive: true })
+    writeFileSync(shim, `@"node" "${unrelated}" %*\n`)
+    assert.throws(
+      () => inspectShellPatch({ dshRoot: shim, manifest: subject.manifest }),
+      error => error instanceof ShellPatchError && /不是完整/u.test(error.message),
+    )
+  } finally {
+    subject.cleanup()
+  }
+})
+
 test('Git preserves byte-sensitive patch payloads across platform checkouts', () => {
   const attributes = readFileSync(new URL('../.gitattributes', import.meta.url), 'utf8')
   assert.match(attributes, /^client\.js text eol=lf$/mu)
@@ -432,5 +479,209 @@ test('status is read-only and reports a complete original fixture', () => {
     assert.equal(existsSync(subject.backupRoot), false)
   } finally {
     subject.cleanup()
+  }
+})
+
+test('two real DSH package trees keep independent state, reinstall idempotently, and restore together', () => {
+  const globalTree = fixture()
+  const npxTree = fixture()
+  const backupRoot = join(globalTree.root, 'shared state', 'shell-backups')
+  const options = {
+    dshRoots: [globalTree.dshRoot, npxTree.dshRoot],
+    manifest: globalTree.manifest,
+    backupRoot,
+  }
+  try {
+    const first = applyAllShellPatches(options)
+    assert.equal(first.state, 'patched')
+    assert.deepEqual(first.installations.map(item => item.previousState), ['original', 'original'])
+    assert.equal(listActiveShellPatchStates({ backupRoot }).length, 2)
+    for (const tree of [globalTree, npxTree]) {
+      for (const [name, target] of FILES) assert.equal(sha256(join(tree.layoutRoot, target)), tree.patched[name])
+    }
+
+    const backupEntries = readdirSync(backupRoot).sort()
+    const second = applyAllShellPatches(options)
+    assert.equal(second.state, 'already-patched')
+    assert.deepEqual(readdirSync(backupRoot).sort(), backupEntries)
+    assert.equal(listActiveShellPatchStates({ backupRoot }).length, 2)
+
+    const restored = restoreAllShellPatches(options)
+    assert.equal(restored.state, 'restored')
+    assert.equal(listActiveShellPatchStates({ backupRoot }).length, 0)
+    for (const tree of [globalTree, npxTree]) {
+      for (const [name, target] of FILES) assert.equal(sha256(join(tree.layoutRoot, target)), tree.originals[name])
+    }
+  } finally {
+    npxTree.cleanup()
+    globalTree.cleanup()
+  }
+})
+
+test('legacy single-root active state migrates without overwriting another root state', () => {
+  const legacyTree = fixture()
+  const otherTree = fixture()
+  const backupRoot = join(legacyTree.root, 'shared state', 'shell-backups')
+  try {
+    applyShellPatch({ dshRoot: legacyTree.dshRoot, manifest: legacyTree.manifest, backupRoot })
+    const legacyState = listActiveShellPatchStates({ backupRoot })[0]
+    const legacyPath = join(dirname(backupRoot), 'shell-patch-active.json')
+    renameSync(legacyState.statePath, legacyPath)
+
+    applyShellPatch({ dshRoot: otherTree.dshRoot, manifest: legacyTree.manifest, backupRoot })
+    assert.ok(existsSync(legacyPath))
+    assert.equal(listActiveShellPatchStates({ backupRoot }).length, 2)
+
+    const adopted = applyShellPatch({ dshRoot: legacyTree.dshRoot, manifest: legacyTree.manifest, backupRoot })
+    assert.equal(adopted.state, 'already-patched')
+    assert.equal(existsSync(legacyPath), false)
+    assert.equal(listActiveShellPatchStates({ backupRoot }).length, 2)
+    restoreAllShellPatches({
+      dshRoots: [legacyTree.dshRoot, otherTree.dshRoot],
+      manifest: legacyTree.manifest,
+      backupRoot,
+    })
+  } finally {
+    otherTree.cleanup()
+    legacyTree.cleanup()
+  }
+})
+
+test('an unsupported active-state schema is rejected before any DSH file replacement', () => {
+  const subject = fixture()
+  let replaceCalled = false
+  try {
+    applyShellPatch({ dshRoot: subject.dshRoot, manifest: subject.manifest, backupRoot: subject.backupRoot })
+    const statePath = activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot })
+    const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    state.schemaVersion = 99
+    writeJson(statePath, state)
+    const before = FILES.map(([, target]) => sha256(join(subject.layoutRoot, target)))
+
+    assert.throws(
+      () => restoreActiveShellPatch({
+        dshRoot: subject.dshRoot,
+        manifest: subject.manifest,
+        backupRoot: subject.backupRoot,
+        replaceFile: () => { replaceCalled = true },
+      }),
+      error => error instanceof ShellPatchError && /active shell patch state/u.test(error.message),
+    )
+    assert.equal(replaceCalled, false)
+    assert.deepEqual(FILES.map(([, target]) => sha256(join(subject.layoutRoot, target))), before)
+    assert.ok(existsSync(statePath))
+  } finally {
+    subject.cleanup()
+  }
+})
+
+test('an active state stored under the wrong root key is rejected before any DSH file replacement', () => {
+  const subject = fixture()
+  const other = fixture()
+  let replaceCalled = false
+  try {
+    applyShellPatch({ dshRoot: subject.dshRoot, manifest: subject.manifest, backupRoot: subject.backupRoot })
+    const statePath = activeStatePathForRoot(subject.dshRoot, { backupRoot: subject.backupRoot })
+    const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    state.dshRoot = other.dshRoot
+    writeJson(statePath, state)
+    const before = FILES.map(([, target]) => sha256(join(subject.layoutRoot, target)))
+
+    assert.throws(
+      () => restoreActiveShellPatch({
+        dshRoot: subject.dshRoot,
+        manifest: subject.manifest,
+        backupRoot: subject.backupRoot,
+        replaceFile: () => { replaceCalled = true },
+      }),
+      error => error instanceof ShellPatchError && /安装根不匹配/u.test(error.message),
+    )
+    assert.equal(replaceCalled, false)
+    assert.deepEqual(FILES.map(([, target]) => sha256(join(subject.layoutRoot, target))), before)
+    assert.ok(existsSync(statePath))
+  } finally {
+    other.cleanup()
+    subject.cleanup()
+  }
+})
+
+test('unsupported second root aborts multi-root apply before the supported root changes', () => {
+  const supported = fixture()
+  const unsupported = fixture()
+  const backupRoot = join(supported.root, 'shared state', 'shell-backups')
+  try {
+    writeJson(join(unsupported.webAppRoot, 'package.json'), {
+      name: '@deepseek-ai/dsh-web-app',
+      version: '0.1.0-unsupported',
+      exports: { './package.json': './package.json' },
+    })
+    const before = [supported, unsupported].map(tree => FILES.map(([, target]) => sha256(join(tree.layoutRoot, target))))
+    assert.throws(
+      () => applyAllShellPatches({
+        dshRoots: [supported.dshRoot, unsupported.dshRoot],
+        manifest: supported.manifest,
+        backupRoot,
+      }),
+      error => error instanceof ShellPatchError && /不受支持/u.test(error.message),
+    )
+    assert.equal(existsSync(backupRoot), false)
+    assert.deepEqual([supported, unsupported].map(tree => FILES.map(([, target]) => sha256(join(tree.layoutRoot, target)))), before)
+  } finally {
+    unsupported.cleanup()
+    supported.cleanup()
+  }
+})
+
+test('damaged second root aborts multi-root apply before any root changes', () => {
+  const first = fixture()
+  const damaged = fixture()
+  const backupRoot = join(first.root, 'shared state', 'shell-backups')
+  try {
+    writeFileSync(join(damaged.layoutRoot, FILES[0][1]), 'damaged by another patch\n')
+    const before = [first, damaged].map(tree => FILES.map(([, target]) => sha256(join(tree.layoutRoot, target))))
+    assert.throws(
+      () => applyAllShellPatches({
+        dshRoots: [first.dshRoot, damaged.dshRoot],
+        manifest: first.manifest,
+        backupRoot,
+      }),
+      error => error instanceof ShellPatchError && /未写入任何文件/u.test(error.message),
+    )
+    assert.equal(existsSync(backupRoot), false)
+    assert.deepEqual([first, damaged].map(tree => FILES.map(([, target]) => sha256(join(tree.layoutRoot, target)))), before)
+  } finally {
+    damaged.cleanup()
+    first.cleanup()
+  }
+})
+
+test('a failure in the second root rolls the first root back to its original files', () => {
+  const first = fixture()
+  const second = fixture()
+  const backupRoot = join(first.root, 'shared state', 'shell-backups')
+  let failed = false
+  try {
+    assert.throws(
+      () => applyAllShellPatches({
+        dshRoots: [first.dshRoot, second.dshRoot],
+        manifest: first.manifest,
+        backupRoot,
+        replaceFile: (stage, target) => {
+          renameSync(stage, target)
+          if (!failed && target.startsWith(realpathSync(second.root))) {
+            failed = true
+            throw new Error('synthetic second-root failure')
+          }
+        },
+      }),
+      error => error instanceof ShellPatchError && /全部恢复/u.test(error.message),
+    )
+    for (const tree of [first, second]) {
+      for (const [name, target] of FILES) assert.equal(sha256(join(tree.layoutRoot, target)), tree.originals[name])
+    }
+    assert.equal(listActiveShellPatchStates({ backupRoot }).length, 0)
+  } finally {
+    second.cleanup()
+    first.cleanup()
   }
 })
