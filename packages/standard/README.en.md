@@ -21,13 +21,13 @@ Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1
 
 DSH's command-line plugin manager also requires `pnpm`. If it is not installed, run `npm install -g pnpm` first.
 
-Keep this edition's `.tgz` archive in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`. Replace the placeholder below with its actual absolute path:
+Install the patch-free sidebar 1.5.0:
 
 ```shell
-dsh plugin --profile web add "/absolute/path/dsh-plugin-trace-insight-VERSION.tgz"
+dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.5.0/dsh-plugin-trace-insight-standard-1.5.0.tgz
 ```
 
-DSH retains local archive references, so keep the file after installation. `DSH_HOME` defaults to `.dsh` in your user directory. An HTTPS URL for the same archive can also be used instead of a local file path.
+You can also install a local `.tgz` using its absolute path. Keep that file in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`, because DSH retains the reference. `DSH_HOME` defaults to `.dsh` in your user directory.
 
 If you run DSH through `npx`, replace the leading `dsh` with `npx --yes --package=@deepseek-ai/dsh dsh`. This also applies to the uninstall command.
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
+import { readFileSync } from 'node:fs'
 
 const base = new URL(process.argv[2] ?? 'http://127.0.0.1:3184')
 assert.equal(base.protocol, 'http:')
@@ -10,6 +11,7 @@ const name = 'dsh-plugin-trace-insight'
 const url = 'https://github.com/Liu-Bot24/dsh-trace-insight/tree/main/packages/standard'
 const fixture = 'dsh-plugin-trace-insight-fixture-llm'
 const sessionId = 'session-standard-demo-0001'
+const expectedVersion = JSON.parse(readFileSync(new URL('../packages/standard/package.json', import.meta.url), 'utf8')).version
 async function market(action, payload, status = 200) {
   const response = await fetch(new URL(`/dsh-market/${action}`, base), {
     method: payload ? 'POST' : 'GET',
@@ -35,7 +37,7 @@ async function rpc(method, payload = {}) {
 async function activation(enabled) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const result = await rpc('capabilities/read')
-    if (enabled ? result?.serviceVersion === '1.4.0' : result === null) return
+    if (enabled ? result?.serviceVersion === expectedVersion : result === null) return
     await delay(100)
   }
   throw new Error(`Host did not become ${enabled ? 'active' : 'inactive'}.`)
@@ -82,4 +84,4 @@ assert.equal(reinstalled.activation[name].state, 'live')
 await activation(true)
 assert.deepEqual(dataFingerprint(await rpc('export/read', { sessionId, kind: 'analysis' })), before)
 console.log('PASS market uninstall/reinstall preserves settings/history and other plugins')
-console.log(JSON.stringify({ ok: true, base: base.origin, version: '1.4.0', target: installed.installed[name] }))
+console.log(JSON.stringify({ ok: true, base: base.origin, version: expectedVersion, target: installed.installed[name] }))

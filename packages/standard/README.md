@@ -21,13 +21,13 @@
 
 命令行管理 DSH 插件需要 `pnpm`；未安装时先运行 `npm install -g pnpm`。
 
-将本版插件的 `.tgz` 包存放到固定目录，例如 `<DSH_HOME>/trace-insight/packages`，再执行以下命令，将占位路径替换为实际完整路径：
+安装无补丁侧栏版 1.5.0：
 
 ```shell
-dsh plugin --profile web add "/完整路径/dsh-plugin-trace-insight-VERSION.tgz"
+dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.5.0/dsh-plugin-trace-insight-standard-1.5.0.tgz
 ```
 
-DSH 会保留本地包的路径引用，安装后请保留该文件。`DSH_HOME` 默认为用户目录下的 `.dsh`。也可以直接使用该版本安装包的 HTTPS 下载地址，避免本地路径引用。
+也可以使用本地 `.tgz` 包的完整路径安装。此时应将包放在固定目录，例如 `<DSH_HOME>/trace-insight/packages`，安装后保留该文件；`DSH_HOME` 默认为用户目录下的 `.dsh`。
 
 如果通过 `npx` 使用 DSH，将命令开头的 `dsh` 替换为 `npx --yes --package=@deepseek-ai/dsh dsh`；卸载命令同样适用。
 
