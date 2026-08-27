@@ -6,7 +6,7 @@
 
 [English](README.en.md)
 
-希望直接在 **对话｜轨迹｜解读** 标签中使用、不安装右侧栏补丁？请使用 [标准标签版](packages/standard/README.md)。下文介绍侧栏版。
+不希望修改 DSH 安装文件？请使用 [无补丁侧栏版](packages/standard/README.md)，同样在右侧显示解读。下文介绍旧补丁侧栏版及其恢复方法。
 
 ![DSH Trace Insight 复盘时间线](docs/assets/trace-insight-review.png)
 

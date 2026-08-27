@@ -21,7 +21,8 @@ async function output(path, body) {
 const template = (await readFile(resolve(root, 'src/client-template.js'), 'utf8')).replace(/\r\n?/gu, '\n')
 async function client(adapter, destination) {
   const entry = (await readFile(resolve(root, `src/client-${adapter}-adapter.js`), 'utf8')).replace(/\r\n?/gu, '\n')
-  const body = `${template.trimEnd()}\n\n${entry}`.split('\n')
+  const dock = adapter === 'standard' ? await readFile(resolve(root, 'src/client-dock-controller.js'), 'utf8') : ''
+  const body = `${template.trimEnd()}\n\n${dock ? `${dock.replace(/\r\n?/gu, '\n')}\n` : ''}${entry}`.split('\n')
     .map(line => line.trim().length === 0 ? '' : `    ${line}`).join('\n')
   await output(destination, `${generated}window.__ModuleLoader__.load({\n  id: "dsh-plugin-trace-insight",\n  factory: (require) => {\n    var module = { exports: {} };\n    var exports = module.exports;\n${body}\n    return module.exports;\n  },\n});\n`)
 }

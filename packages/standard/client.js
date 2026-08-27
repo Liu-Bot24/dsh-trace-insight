@@ -3727,16 +3727,263 @@ window.__ModuleLoader__.load({
           }
     }
 
+    // Runtime-only geometry. This module never reads or writes DSH installation files.
+    const TI_DOCK_MIN = 320
+    const TI_DOCK_MAIN_MIN = 720
+    const TI_DOCK_DEFAULT = 480
+    const TI_DOCK_STORAGE = 'trace-insight:dock:v1'
+
+    function dockGeometry(viewport, preferred, visible, competing = false) {
+      const available = Math.max(1, Math.floor(viewport))
+      const drawer = competing || available < TI_DOCK_MAIN_MIN + TI_DOCK_MIN
+      const max = Math.max(1, drawer ? available - 16 : available - TI_DOCK_MAIN_MIN)
+      const min = Math.min(TI_DOCK_MIN, max)
+      const width = Math.min(max, Math.max(min, Number.isFinite(preferred) ? preferred : TI_DOCK_DEFAULT))
+      return { width, min, max, drawer, push: visible && !drawer ? width : 0 }
+    }
+
+    function createTraceInsightDock(win, doc) {
+      let preference = { open: true, width: TI_DOCK_DEFAULT }
+      let sessionId
+      let root
+      let host
+      let resizeFrame
+      let drag
+      let observer
+      let error = ''
+      const subscribers = new Set()
+      let snapshot = { open: true, visible: false, width: TI_DOCK_DEFAULT, min: TI_DOCK_MIN, max: TI_DOCK_DEFAULT, drawer: false, competing: false, error: '' }
+      const notify = () => {
+        const next = { ...geometry(), open: preference.open, visible: Boolean(preference.open && sessionId), error }
+        if (Object.keys(next).some(key => next[key] !== snapshot[key])) {
+          snapshot = next
+          for (const callback of subscribers) callback()
+        }
+      }
+      const competing = () => Number.parseFloat(win.getComputedStyle(doc.documentElement).getPropertyValue('--dsh-sidebar-width')) > 0
+      const geometry = () => {
+        const other = Boolean(host && competing())
+        return { ...dockGeometry(doc.documentElement.clientWidth || win.innerWidth, preference.width, Boolean(preference.open && sessionId && !error), other), competing: other }
+      }
+      const setStyle = (element, name, value) => {
+        if (element.style.getPropertyValue(name) !== value) element.style.setProperty(name, value)
+      }
+      function paint(publish = true) {
+        if (!host) return
+        const current = geometry()
+        setStyle(host, '--ti-dock-width', `${current.width}px`)
+        if (root && current.push > 0) {
+          setStyle(root, '--ti-dock-push', `${current.push}px`)
+          root.setAttribute('data-ti-dock-push', '')
+        } else if (root) {
+          root.removeAttribute('data-ti-dock-push')
+          root.style.removeProperty('--ti-dock-push')
+        }
+        if (publish) notify()
+      }
+      function persist() {
+        // Optional browser preferences must not prevent opening the analysis view.
+        try { win.localStorage.setItem(TI_DOCK_STORAGE, JSON.stringify(preference)) } catch {}
+      }
+      function schedulePaint() {
+        if (resizeFrame !== undefined) return
+        resizeFrame = win.requestAnimationFrame(() => {
+          resizeFrame = undefined
+          paint()
+        })
+      }
+      function stopDrag(commit = true) {
+        if (!drag) return
+        const previous = drag
+        drag = undefined
+        win.removeEventListener('pointermove', moveDrag)
+        win.removeEventListener('pointerup', endDrag)
+        win.removeEventListener('pointercancel', cancelDrag)
+        win.removeEventListener('blur', cancelDrag)
+        previous.element.removeEventListener('lostpointercapture', cancelDrag)
+        if (previous.element.hasPointerCapture?.(previous.id)) previous.element.releasePointerCapture(previous.id)
+        doc.documentElement.removeAttribute('data-ti-dock-dragging')
+        if (resizeFrame !== undefined) win.cancelAnimationFrame(resizeFrame)
+        resizeFrame = undefined
+        if (!commit) preference.width = previous.width
+        else persist()
+        paint()
+      }
+      function moveDrag(event) {
+        if (!drag || event.pointerId !== drag.id) return
+        const limits = geometry()
+        preference.width = Math.min(limits.max, Math.max(limits.min, drag.width + drag.x - event.clientX))
+        if (resizeFrame !== undefined) return
+        resizeFrame = win.requestAnimationFrame(() => {
+          resizeFrame = undefined
+          paint(false)
+        })
+      }
+      function endDrag(event) { if (event.pointerId === drag?.id) stopDrag() }
+      function cancelDrag() { stopDrag(false) }
+      return {
+        subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback) },
+        getSnapshot() { return snapshot },
+        mount() {
+          if (host) throw new Error('Trace Insight sidebar is already mounted.')
+          try {
+            const stored = JSON.parse(win.localStorage.getItem(TI_DOCK_STORAGE))
+            if (typeof stored?.open === 'boolean') preference.open = stored.open
+            if (Number.isFinite(stored?.width) && stored.width >= TI_DOCK_MIN && stored.width <= 8192) preference.width = stored.width
+          } catch {}
+          const candidate = doc.getElementById('root')
+          if (candidate?.hasAttribute('data-ti-dock-push') || doc.querySelector('[data-trace-insight-dock]')) {
+            throw new Error('Trace Insight sidebar is already active. Refresh DSH before enabling it again.')
+          }
+          root = candidate
+          if (!root) error = '无法找到 DSH 主界面。解读侧栏没有改变页面布局，请刷新页面后重试。'
+          host = doc.createElement('div')
+          host.setAttribute('data-trace-insight-dock', '')
+          doc.body.appendChild(host)
+          win.addEventListener('resize', schedulePaint)
+          observer = new win.MutationObserver(schedulePaint)
+          observer.observe(doc.documentElement, { attributes: true, attributeFilter: ['style'] })
+          paint()
+          return host
+        },
+        setSession(value) { sessionId = value; stopDrag(false); paint() },
+        toggle() { this.setOpen(!preference.open) },
+        setOpen(value) { stopDrag(false); preference.open = Boolean(value); persist(); paint() },
+        resize(value) {
+          const limits = geometry()
+          preference.width = Math.min(limits.max, Math.max(limits.min, value))
+          persist()
+          paint()
+        },
+        startDrag(event) {
+          if (event.button !== 0 || drag || !snapshot.visible) return
+          event.preventDefault()
+          drag = { id: event.pointerId, element: event.currentTarget, x: event.clientX, width: geometry().width }
+          drag.element.setPointerCapture(event.pointerId)
+          drag.element.addEventListener('lostpointercapture', cancelDrag)
+          doc.documentElement.setAttribute('data-ti-dock-dragging', '')
+          win.addEventListener('pointermove', moveDrag)
+          win.addEventListener('pointerup', endDrag)
+          win.addEventListener('pointercancel', cancelDrag)
+          win.addEventListener('blur', cancelDrag)
+        },
+        dispose() {
+          stopDrag(false)
+          if (resizeFrame !== undefined) win.cancelAnimationFrame(resizeFrame)
+          resizeFrame = undefined
+          observer?.disconnect()
+          observer = undefined
+          win.removeEventListener('resize', schedulePaint)
+          if (root) {
+            root.removeAttribute('data-ti-dock-push')
+            root.style.removeProperty('--ti-dock-push')
+          }
+          host?.remove()
+          host = undefined
+          root = undefined
+          error = ''
+        },
+      }
+    }
+
     const inject = ['slots', 'sessions', 'connection']
-    const ADAPTER_STYLE_TEXT = ''
+    const DOCK_SLOT = 'trace-insight.panel'
+    const ADAPTER_STYLE_TEXT = `
+    #root[data-ti-dock-push] { width: calc(100% - var(--ti-dock-push)); margin-right: var(--ti-dock-push); }
+    [data-trace-insight-dock] { position: fixed; inset: 0; pointer-events: none; z-index: 25; }
+    .tiDock { pointer-events: auto; position: absolute; top: 0; bottom: 0; right: 0; width: var(--ti-dock-width); display: flex; flex-direction: column; min-width: 0; background: var(--dsw-alias-bg-base, #f5f7fb); border-left: 1px solid var(--dsw-alias-border-l2, #dce2eb); color: var(--dsw-alias-label-primary, #182136); font-family: var(--dsw-font-family, sans-serif); box-sizing: border-box; }
+    .tiDock[hidden] { display: none; }
+    .tiDock[data-drawer="true"] { box-shadow: -8px 0 28px #0003; }
+    .tiDockToolbar { flex: 0 0 38px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l2, #dce2eb); font-size: 12px; }
+    .tiDockClose { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 4px 8px; font-size: 20px; border-radius: 5px; }
+    .tiDockContent { flex: 1; min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+    .tiDockContent > * { min-height: 0; flex: 1; }
+    .tiDockResize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; z-index: 2; }
+    .tiDockResize:hover, .tiDockResize:focus-visible { background: #4b6af040; outline: none; }
+    html[data-ti-dock-dragging], html[data-ti-dock-dragging] * { cursor: col-resize !important; user-select: none !important; }
+    .tiDockNotice { padding: 10px 14px; margin: 0; font-size: 12px; }
+    .tiToggle { border: 1px solid var(--dsw-alias-border-l2); min-width: 82px; height: 32px; color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family); cursor: pointer; background: transparent; border-radius: 9px; justify-content: center; align-items: center; gap: 7px; padding: 5px 10px 5px 12px; font-size: 13px; font-weight: 500; line-height: 20px; display: inline-flex; }
+    .tiToggle:hover, .tiToggle[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-hover); }
+    .tiToggle:focus-visible, .tiDockClose:focus-visible { outline: 3px solid #3a56d448; outline-offset: 2px; }
+    .tiToggleIcon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; }
+    `
+
+    function useDockSnapshot(dock) {
+      return React.useSyncExternalStore(dock.subscribe, dock.getSnapshot, dock.getSnapshot)
+    }
+
+    function DockToggle({ dock }) {
+      const state = useDockSnapshot(dock)
+      return h('button', {
+        className: 'tiToggle', type: 'button',
+        'aria-pressed': state.open, 'aria-controls': 'trace-insight-dock-panel',
+        'aria-label': state.open ? '收起解读侧栏' : '展开解读侧栏',
+        onClick: () => dock.toggle(),
+      }, '解读', h('svg', { className: 'tiToggleIcon', viewBox: '0 0 24 24', 'aria-hidden': true },
+        h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 2.5 }), h('path', { d: 'M15 4v16' })))
+    }
+
+    function DockFrame({ dock, useSessions, renderSlot }) {
+      const state = useDockSnapshot(dock)
+      const sessionId = useSessions(s => s.current !== undefined && s.byId[s.current]?.blank === false ? s.current : undefined)
+      const [host, setHost] = useState(null)
+      const [visited, setVisited] = useState(false)
+      React.useLayoutEffect(() => {
+        setHost(dock.mount())
+        return () => dock.dispose()
+      }, [dock])
+      React.useLayoutEffect(() => { dock.setSession(sessionId) }, [dock, sessionId])
+      useEffect(() => { if (state.visible) setVisited(true) }, [state.visible])
+      if (!host) return null
+      const { createPortal } = require('react-dom')
+      const close = () => {
+        dock.setOpen(false)
+        document.querySelector('.tiToggle')?.focus()
+      }
+      return createPortal(h('aside', {
+        id: 'trace-insight-dock-panel', className: 'tiDock', 'aria-label': 'Trace Insight 解读侧栏',
+        hidden: !state.visible, 'data-drawer': state.drawer,
+        onKeyDown: event => {
+          // Nested dialogs and evidence panels retain their own Escape handling.
+          if (event.key === 'Escape' && !event.defaultPrevented && !event.target.closest('[role="dialog"]')) {
+            event.stopPropagation()
+            close()
+          }
+        },
+      }, h('div', { className: 'tiDockToolbar' },
+        h('span', null, 'Trace Insight · 解读'),
+        h('button', { className: 'tiDockClose', type: 'button', 'aria-label': '关闭解读侧栏', onClick: close }, '×')),
+      h('div', {
+        className: 'tiDockResize', role: 'separator', tabIndex: 0, 'aria-orientation': 'vertical',
+        'aria-label': '调整解读侧栏宽度', 'aria-valuemin': state.min, 'aria-valuemax': state.max, 'aria-valuenow': state.width,
+        onPointerDown: event => dock.startDrag(event),
+        onKeyDown: event => {
+          const values = { ArrowLeft: state.width + 16, ArrowRight: state.width - 16, Home: state.min, End: state.max }
+          if (!(event.key in values)) return
+          event.preventDefault()
+          dock.resize(values[event.key])
+        },
+      }),
+      state.competing ? h('p', { className: 'tiDockNotice', role: 'status' }, '另一个侧栏已打开，解读以浮层显示。') : null,
+      state.error ? h('p', { className: 'tiDockNotice', role: 'alert' }, state.error)
+        : h('div', { className: 'tiDockContent' }, (visited || state.visible) && sessionId ? renderSlot(DOCK_SLOT, {}) : null)), host)
+    }
 
     function apply(ctx) {
+      const dock = createTraceInsightDock(window, document)
       ctx.effect(() => installStyle(), 'trace-insight: styles')
-      ctx.slots.inject('conversation.view', () => ctx.slots.register({
-        name: 'conversation.view',
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay', id: 'trace-insight-dock', order: 20,
+        children: { [DOCK_SLOT]: { kind: 'single', scope: 'session' } },
+        inject: () => ({ dock }),
+      }, DockFrame))
+      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+        name: 'conversation.session.header.utilities', id: 'trace-insight-dock-toggle', order: 20,
+        inject: () => ({ dock }),
+      }, DockToggle))
+      ctx.slots.inject(DOCK_SLOT, () => ctx.slots.register({
+        name: DOCK_SLOT,
         id: VIEW_ID,
-        order: 20,
-        label: () => VIEW_LABEL,
         inject: sessionId => buildSessionFace(ctx, sessionId),
       }, TraceInsightView))
     }

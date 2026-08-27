@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
+import { readFileSync } from 'node:fs'
 
 // Run against a real, isolated DSH with seed-standard.mjs and dsh-llm-fixture.
 const base = new URL(process.argv[2] ?? 'http://127.0.0.1:3184')
@@ -8,6 +9,7 @@ assert.equal(base.protocol, 'http:')
 assert.ok(['127.0.0.1', 'localhost'].includes(base.hostname))
 assert.ok(base.port && base.port !== '3080', 'Never test against the daily DSH port.')
 const sessions = ['session-standard-demo-0001', 'session-standard-demo-0002']
+const expectedVersion = JSON.parse(readFileSync(new URL('../packages/standard/package.json', import.meta.url), 'utf8')).version
 const route = model => ({ provider: 'trace-insight-fixture', model })
 const checks = []
 async function rpc(method, payload = {}, errorCode) {
@@ -36,7 +38,7 @@ async function check(name, run) {
 }
 const sessionId = sessions[0]
 await check('real Host API and standard version', async () => {
-  assert.equal((await rpc('capabilities/read')).serviceVersion, '1.4.0')
+  assert.equal((await rpc('capabilities/read')).serviceVersion, expectedVersion)
   assert.ok((await rpc('models/list')).models.some(model => model.provider === route('').provider && model.model === 'fixture-small'))
 })
 await check('rule analysis, bounded bootstrap, and passive reads', async () => {
@@ -126,7 +128,7 @@ await check('raw/bundle exports require matching single-use confirmation', async
     const request = { sessionId, kind, options: { redactRaw: true, fromSeq: 0, toSeq: 7 }, confirmationToken: preview.confirmationToken }
     const exported = await rpc('export/read', request)
     assert.equal(exported.manifest.rawRange.eventCount, 8)
-    assert.equal(exported.serviceVersion, '1.4.0')
+    assert.equal(exported.serviceVersion, expectedVersion)
     await rpc('export/read', request, 'EXPORT_CONFIRMATION_STALE')
   }
   const other = await rpc('export/read', { sessionId: sessions[1], kind: 'analysis' })

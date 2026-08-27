@@ -1,6 +1,6 @@
-# Trace Insight — Standard Tab Edition
+# Trace Insight — Patch-free Sidebar
 
-Review DeepSeek Harness sessions in **Conversation | Trajectory | 解读**. This edition uses standard DSH plugin interfaces, does not modify DSH installation files, and needs no sidebar patch.
+Review DeepSeek Harness sessions in a right sidebar. Use **解读** in the session header to open or close it and drag its left edge to resize. This edition uses standard DSH plugin interfaces, does not modify DSH installation files, and requires no other sidebar framework.
 
 [中文](README.md)
 
@@ -19,19 +19,23 @@ Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1
 
 DSH's command-line plugin manager also requires `pnpm`. If it is not installed, run `npm install -g pnpm` first.
 
+Keep this edition's `.tgz` archive in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`. Replace the placeholder below with its actual absolute path:
+
 ```shell
-dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.4.0/dsh-plugin-trace-insight-standard-1.4.0.tgz
+dsh plugin --profile web add "/absolute/path/dsh-plugin-trace-insight-VERSION.tgz"
 ```
+
+DSH retains local archive references, so keep the file after installation. `DSH_HOME` defaults to `.dsh` in your user directory. An HTTPS URL for the same archive can also be used instead of a local file path.
 
 If you run DSH through `npx`, replace the leading `dsh` with `npx --yes --package=@deepseek-ai/dsh dsh`. This also applies to the uninstall command.
 
-Restart DSH Web, open a session, and select **解读**. When installing through the marketplace, follow its refresh or restart prompt.
+Restart DSH Web, open a session, and click **解读**. Wide windows show the sidebar beside the conversation; narrow windows use a closable drawer. Closing it restores the conversation width. Drag the edge or focus it and use the left/right arrow keys to resize.
 
 Rule-based review works immediately. To use model analysis, select a model under **Settings → Model and automation** and save it.
 
 ## Update and uninstall
 
-Update through the marketplace, or run the same `dsh plugin --profile web add` command with the new standard-edition archive URL. Analysis history and settings are retained.
+Run the same `dsh plugin --profile web add` command with the new archive. Analysis history and settings are retained.
 
 ```shell
 dsh plugin --profile web remove dsh-plugin-trace-insight
@@ -39,11 +43,11 @@ dsh plugin --profile web remove dsh-plugin-trace-insight
 
 Refresh or restart DSH as prompted. Saved analysis history and settings remain in `<DSH_HOME>/trace-insight`, which defaults to `.dsh/trace-insight` in your user directory.
 
-## Switching from the sidebar edition
+## Switching from an earlier edition
 
-The standard tab and sidebar editions are alternative presentations of the same plugin. They share a package name and data format and are not installed as two simultaneous plugins.
+This edition shares its package name and data format with earlier editions and is not installed alongside them as a second plugin. The tab edition can be updated directly.
 
-If the sidebar edition is installed, first use its uninstaller to remove the plugin and restore the DSH files it manages, then install this edition. Analysis history and settings are retained. The standard edition does not modify or remove host patches left by another edition.
+If the file-patched sidebar edition is installed, stop DSH and use that edition's uninstaller to restore the DSH files it manages before installing this edition. Analysis history and settings are retained. Normal installation, deactivation and removal of this edition do not modify DSH installation files.
 
 ## Privacy and access
 

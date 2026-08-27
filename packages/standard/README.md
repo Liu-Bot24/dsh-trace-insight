@@ -1,6 +1,6 @@
-# Trace Insight 标准标签版
+# Trace Insight 无补丁侧栏版
 
-在 DeepSeek Harness 的 **对话｜轨迹｜解读** 中复盘会话执行过程。使用 DSH 标准插件接口，不修改 DSH 安装文件，不需要侧栏补丁。
+在 DeepSeek Harness 的右侧栏中复盘会话执行过程。通过会话标题栏的 **解读** 按钮开关，拖动左边缘调整宽度。使用 DSH 标准插件接口，不修改 DSH 安装文件，也不需要安装其他侧栏框架。
 
 [English](README.en.md)
 
@@ -19,19 +19,23 @@
 
 命令行管理 DSH 插件需要 `pnpm`；未安装时先运行 `npm install -g pnpm`。
 
+将本版插件的 `.tgz` 包存放到固定目录，例如 `<DSH_HOME>/trace-insight/packages`，再执行以下命令，将占位路径替换为实际完整路径：
+
 ```shell
-dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.4.0/dsh-plugin-trace-insight-standard-1.4.0.tgz
+dsh plugin --profile web add "/完整路径/dsh-plugin-trace-insight-VERSION.tgz"
 ```
+
+DSH 会保留本地包的路径引用，安装后请保留该文件。`DSH_HOME` 默认为用户目录下的 `.dsh`。也可以直接使用该版本安装包的 HTTPS 下载地址，避免本地路径引用。
 
 如果通过 `npx` 使用 DSH，将命令开头的 `dsh` 替换为 `npx --yes --package=@deepseek-ai/dsh dsh`；卸载命令同样适用。
 
-重新启动 DSH Web，打开会话，选择 **解读**。在插件市场安装时，按市场提示刷新页面或重启。
+重新启动 DSH Web，打开会话，点击 **解读**。宽窗口下侧栏与对话并排显示，窄窗口下以可关闭的浮层显示；关闭后恢复对话宽度。拖动边缘或聚焦边缘后按左右方向键调宽。
 
 首次使用可直接查看规则分析；需要模型解读时，在 **设置 → 模型与自动策略** 中选择模型并保存。
 
 ## 更新与卸载
 
-从插件市场更新，或对新版本的标准版安装包执行同一条 `dsh plugin --profile web add` 命令。已有分析历史和设置会保留。
+对新版本的安装包执行同一条 `dsh plugin --profile web add` 命令。已有分析历史和设置会保留。
 
 ```shell
 dsh plugin --profile web remove dsh-plugin-trace-insight
@@ -39,11 +43,11 @@ dsh plugin --profile web remove dsh-plugin-trace-insight
 
 卸载后按市场提示刷新或重新启动 DSH。分析历史和设置仍保存在 `<DSH_HOME>/trace-insight`，默认是用户目录中的 `.dsh/trace-insight`。
 
-## 与侧栏版切换
+## 从旧版切换
 
-标准标签版和侧栏版是同一插件的两种呈现方式，使用同一插件名和数据格式，不同时安装为两个插件。
+本版与旧版使用同一插件名和数据格式，不同时安装为两个插件。标签版可直接更新到本版。
 
-已有侧栏版时，先用侧栏版的卸载程序移除插件并恢复它管理的 DSH 文件，再安装本标准版。分析历史和设置会保留。标准版不会自行修改或清除其他版本留下的宿主补丁。
+已有补丁侧栏版时，先停止 DSH，用该旧版的卸载程序恢复它管理的 DSH 文件，再安装本版。分析历史和设置会保留。本版的正常安装、停用和卸载均不修改 DSH 安装文件。
 
 ## 隐私与使用范围
 

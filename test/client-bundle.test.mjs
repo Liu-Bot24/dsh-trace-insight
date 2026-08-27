@@ -211,7 +211,7 @@ test('browser bundle registers the inspector pane and the header toggle on inspe
   assert.match(treeText(toggleTree), /解读/)
 })
 
-test('browser bundle falls back to the 解读 conversation view on hosts without the inspector slot', async () => {
+test('legacy bundle falls back to the 解读 conversation view on hosts without the inspector slot', { skip: standardEdition }, async () => {
   const plugin = await loadBundle()
   let registration
   const ctx = {
@@ -1668,8 +1668,7 @@ test('review layout uses the full workbench and exposes the timeline without nes
   assert.match(source, /className: 'tiConsole'/)
   assert.match(source, /className: 'tiGapZone'/)
   const adapter = await readFile(new URL(standardEdition ? '../src/client-standard-adapter.js' : '../src/client-sidebar-adapter.js', import.meta.url), 'utf8')
-  if (standardEdition) assert.doesNotMatch(adapter, /className: 'tiToggle'/)
-  else assert.match(adapter, /className: 'tiToggle'/)
+  assert.match(adapter, /className: 'tiToggle'/)
   assert.match(source, /资源与用量/)
   assert.match(source, /className: 'tiTimelineTools'/)
   assert.match(source, /className: 'tiToolDisclosure'/)

@@ -35,7 +35,7 @@ function loadClient() {
 
 test('standard metadata is a prebuilt standard DSH plugin with no shell lifecycle or external workspace dependency', () => {
   assert.equal(manifest.name, 'dsh-plugin-trace-insight')
-  assert.equal(manifest.version, '1.4.0')
+  assert.equal(manifest.version, '1.5.0-dev.2')
   assert.equal(manifest.repository.directory, 'packages/standard')
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.scripts, undefined)
@@ -46,10 +46,10 @@ test('standard metadata is a prebuilt standard DSH plugin with no shell lifecycl
   assert.doesNotMatch(host, /\.\.\/|shell-patch|managed-package|spawnSync|execSync/)
 })
 
-test('standard registers only a conversation tab even when a patched host has an inspector', () => {
+test('standard owns only an overlay, header button and private session slot, independently of host inspector/details', () => {
   const { plugin, source, styles } = loadClient()
   assert.deepEqual(Array.from(plugin.inject), ['slots', 'sessions', 'connection'])
-  assert.doesNotMatch(source, /InspectorToggle|toggleInspector|ctx\.layout|slots\.spec|tiToggle/)
+  assert.doesNotMatch(source, /InspectorToggle|toggleInspector|ctx\.layout|slots\.spec/)
   const registrations = new Map()
   const disposers = []
   const ctx = {
@@ -60,13 +60,11 @@ test('standard registers only a conversation tab even when a patched host has an
     slots: {
       spec() { throw new Error('standard must not probe inspector availability') },
       inject(name, callback) {
-        assert.equal(name, 'conversation.view')
+        assert.ok(['shell.overlay', 'conversation.session.header.utilities', 'trace-insight.panel'].includes(name))
         disposers.push(callback())
       },
       register(options, component) {
-        assert.equal(options.name, 'conversation.view')
-        assert.equal(options.id, 'trace-insight')
-        assert.equal(options.label(), '解读')
+        assert.ok(['shell.overlay', 'conversation.session.header.utilities', 'trace-insight.panel'].includes(options.name))
         assert.equal(typeof component, 'function')
         assert.equal(registrations.has(options.id), false)
         registrations.set(options.id, options)
@@ -76,7 +74,10 @@ test('standard registers only a conversation tab even when a patched host has an
   }
   for (let cycle = 0; cycle < 3; cycle++) {
     plugin.apply(ctx)
-    assert.equal(registrations.size, 1)
+    assert.equal(registrations.size, 3)
+    assert.equal(registrations.get('trace-insight-dock').children['trace-insight.panel'].scope, 'session')
+    assert.equal(registrations.get('trace-insight-dock').children['trace-insight.panel'].kind, 'single')
+    assert.equal(registrations.get('trace-insight-dock').inject().dock, registrations.get('trace-insight-dock-toggle').inject().dock)
     assert.equal(styles.size, 1)
     const face = registrations.get('trace-insight').inject('session-standard')
     assert.equal(face.sessionId, 'session-standard')
