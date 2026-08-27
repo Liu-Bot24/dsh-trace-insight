@@ -49,6 +49,8 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "test": "node --test",
+    "test:standard-client": "node scripts/verify-standard-client.mjs",
+    "check:build": "node scripts/build.mjs --check",
     "prepack": "npm run build && npm test"
   },
   "keywords": [

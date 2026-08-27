@@ -3,8 +3,11 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 
+const standardEdition = process.env.TRACE_INSIGHT_TEST_VARIANT === 'standard'
+const clientUrl = new URL(standardEdition ? '../packages/standard/client.js' : '../client.js', import.meta.url)
+
 async function loadBundle(reactOverride, runtimeOverrides = {}) {
-  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  const source = await readFile(clientUrl, 'utf8')
   let descriptor
   const context = {
     window: { __ModuleLoader__: { load(value) { descriptor = value } } },
@@ -168,7 +171,7 @@ function boundedBootstrap(items = []) {
   }
 }
 
-test('browser bundle registers the inspector pane and the header toggle on inspector hosts', async () => {
+test('browser bundle registers the inspector pane and the header toggle on inspector hosts', { skip: standardEdition }, async () => {
   const harness = interactiveReactHarness()
   const plugin = await loadBundle(harness.react)
   assert.deepEqual(Array.from(plugin.inject), ['slots', 'sessions', 'connection', 'layout'])
@@ -1581,7 +1584,7 @@ test('a stale status poll cannot regress a newer terminal Job summary', async ()
 })
 
 test('generated client includes the P0 state, timeline, controlled analysis, evidence, and export safeguards', async () => {
-  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  const source = await readFile(clientUrl, 'utf8')
   assert.match(source, /当前有效模型/)
   assert.match(source, /分析进度/)
   assert.match(source, /数据新鲜度/)
@@ -1664,7 +1667,9 @@ test('review layout uses the full workbench and exposes the timeline without nes
   assert.match(source, /className: 'tiPanelTop'/)
   assert.match(source, /className: 'tiConsole'/)
   assert.match(source, /className: 'tiGapZone'/)
-  assert.match(source, /className: 'tiToggle'/)
+  const adapter = await readFile(new URL(standardEdition ? '../src/client-standard-adapter.js' : '../src/client-sidebar-adapter.js', import.meta.url), 'utf8')
+  if (standardEdition) assert.doesNotMatch(adapter, /className: 'tiToggle'/)
+  else assert.match(adapter, /className: 'tiToggle'/)
   assert.match(source, /资源与用量/)
   assert.match(source, /className: 'tiTimelineTools'/)
   assert.match(source, /className: 'tiToolDisclosure'/)
@@ -1676,7 +1681,7 @@ test('review layout uses the full workbench and exposes the timeline without nes
 })
 
 test('generated client implements bounded P1/P2 investigation workflows without fake legacy controls', async () => {
-  const source = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+  const source = await readFile(clientUrl, 'utf8')
   assert.match(source, /insight\/bootstrap/)
   assert.match(source, /programmatic\/sync/)
   assert.match(source, /本地规则分析，不会调用模型/)

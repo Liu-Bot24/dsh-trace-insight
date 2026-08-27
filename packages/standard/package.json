@@ -1,0 +1,45 @@
+{
+  "name": "dsh-plugin-trace-insight",
+  "version": "1.4.0",
+  "description": "Read-only trajectory analysis in the DeepSeek Harness conversation tab.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Liu-Bot24/dsh-trace-insight.git",
+    "directory": "packages/standard"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-trajectory"
+      ],
+      "platform": "web"
+    }
+  },
+  "engines": { "node": ">=22.19.0" },
+  "keywords": ["deepseek-harness", "dsh-plugin", "trajectory-analysis", "read-only"],
+  "license": "MIT",
+  "dshCompatibility": {
+    "version": "0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2",
+    "surface": "web"
+  }
+}

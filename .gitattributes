@@ -1,3 +1,7 @@
 client.js text eol=lf
 src/client-template.js text eol=lf
+src/client-*-adapter.js text eol=lf
+packages/standard/*.js text eol=lf
+packages/standard/lib/*.mjs text eol=lf
+packages/standard/LICENSE text eol=lf
 patches/dsh-client-ui-layout/* text eol=lf

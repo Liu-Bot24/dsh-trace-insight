@@ -6,6 +6,8 @@
 
 [English](README.en.md)
 
+希望直接在 **对话｜轨迹｜解读** 标签中使用、不安装右侧栏补丁？请使用 [标准标签版](packages/standard/README.md)。下文介绍侧栏版。
+
 ![DSH Trace Insight 复盘时间线](docs/assets/trace-insight-review.png)
 
 ## 它解决什么问题

@@ -1,0 +1,1 @@
+export const TRACE_INSIGHT_SERVICE_VERSION = '1.3.3'

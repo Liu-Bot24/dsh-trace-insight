@@ -6,6 +6,8 @@ A read-only execution retrospective plugin for DeepSeek Harness (DSH). It turns 
 
 [简体中文](README.md)
 
+Prefer a standard **Conversation | Trajectory | 解读** tab without a sidebar patch? Use the [standard tab edition](packages/standard/README.en.md). This page describes the sidebar edition.
+
 ![DSH Trace Insight review timeline](docs/assets/trace-insight-review.png)
 
 ## What problem does it solve?
