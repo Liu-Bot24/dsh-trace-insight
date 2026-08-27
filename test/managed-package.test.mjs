@@ -434,7 +434,7 @@ function runPackageManager(command, args, options) {
 test('shell installer migrates a missing external file reference and survives source deletion and later plugin changes', {
   skip: process.platform === 'win32',
 }, () => {
-  const root = mkdtempSync('/private/tmp/trace insight shell lifecycle ')
+  const root = mkdtempSync(join(tmpdir(), 'trace insight shell lifecycle '))
   try {
     const installRoot = join(root, 'fake DSH installation')
     const fakeBin = join(installRoot, 'bin')
