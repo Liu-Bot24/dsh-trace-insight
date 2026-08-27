@@ -6,6 +6,7 @@ import {
   compressTraceEvent,
   evaluateAutomaticTrigger,
   normalizeAnalysisSettings,
+  planAnalysisBatches,
   planCoverageSegments,
   stableInputHash,
 } from './analysis-policy.mjs'
@@ -330,6 +331,12 @@ function boundedJobSummary(job) {
     const status = String(segment?.status ?? 'unknown')
     statusCounts[Object.hasOwn(statusCounts, status) ? status : 'unknown'] += 1
   }
+  const batches = asArray(job.batchPlan?.batches)
+  const batchProgress = batches.length ? {
+    total: batches.length,
+    completed: batches.filter(batch => segments.slice(batch.firstSegment, batch.lastSegment + 1).every(segment => segment.status === 'succeeded')).length,
+    current: progressCurrent === null ? null : batches.find(batch => batch.firstSegment <= progressCurrent && batch.lastSegment >= progressCurrent)?.index ?? null,
+  } : null
   return {
     id: job.id,
     kind: job.kind ?? 'manual-analysis',
@@ -352,6 +359,7 @@ function boundedJobSummary(job) {
     retrySegment: boundedJobSegment(retry),
     segmentStatusCounts: statusCounts,
     progress: { completed: completedSegments, total: totalSegments, current: progressCurrent },
+    batchProgress,
     error: boundedJobError(job.error),
     resourceOverride: job.resourceOverride?.authorized ? {
       authorized: true,
@@ -652,6 +660,20 @@ function latestByTime(items, predicate = () => true) {
     .at(0) ?? null
 }
 
+function automaticRetrySummary(history, closedThroughSeq) {
+  const retry = history.semantic.retry
+  if (!retry) return null
+  // Resolve the original automatic failure, not a later manual backfill or
+  // the entire accumulated coverage gap. Older persisted retry records only
+  // contain fromSeq; their corresponding runs still retain the exact end.
+  const run = latestByTime(history.semantic.runs, item => item.mode === 'auto'
+    && (!item.coverageRole || item.coverageRole === 'primary')
+    && ['failed', 'interrupted'].includes(item.status)
+    && item.fromSeq === retry.fromSeq && routeEquals(item.route, retry.route))
+  const validEnd = Number.isSafeInteger(run?.toSeq) && run.toSeq >= retry.fromSeq && run.toSeq <= closedThroughSeq
+  return { ...retry, runId: run?.id ?? null, toSeq: validEnd ? run.toSeq : null }
+}
+
 /** Synchronous best-effort estimate of the next provisional analysis moment. */
 function provisionalEstimate(openLive, provisional, settings) {
   if (!openLive) return null
@@ -906,7 +928,7 @@ function addBucket(map, key, label, ref, meta = {}) {
   bucket.refs.push(ref)
 }
 
-function budgetAssessment(resources, policy) {
+function budgetAssessment(resources, policy, batchPlan = undefined) {
   const limits = {
     maxCallsPerJob: policy.maxCallsPerJob,
     maxInputCharsPerJob: policy.maxInputCharsPerJob,
@@ -917,9 +939,11 @@ function budgetAssessment(resources, policy) {
   if (resources.modelCalls >= policy.warnCallsPerJob) warnings.push({ code: 'CALLS_WARNING', actual: resources.modelCalls, limit: policy.warnCallsPerJob })
   if (resources.inputChars >= policy.warnInputCharsPerJob) warnings.push({ code: 'INPUT_CHARS_WARNING', actual: resources.inputChars, limit: policy.warnInputCharsPerJob })
   const violations = []
-  if (resources.modelCalls > policy.maxCallsPerJob) violations.push({ code: 'MAX_CALLS_EXCEEDED', actual: resources.modelCalls, limit: policy.maxCallsPerJob })
-  if (resources.inputChars > policy.maxInputCharsPerJob) violations.push({ code: 'MAX_INPUT_CHARS_EXCEEDED', actual: resources.inputChars, limit: policy.maxInputCharsPerJob })
-  return { limits, warnings, violations, hardLimitExceeded: violations.length > 0, requiresOverride: violations.length > 0 }
+  const largestCalls = batchPlan ? batchPlan.batches.reduce((max, batch) => Math.max(max, batch.reservedCalls), 0) : resources.modelCalls
+  const largestInput = batchPlan ? batchPlan.batches.reduce((max, batch) => Math.max(max, batch.reservedInputChars), 0) : resources.inputChars
+  if (largestCalls > policy.maxCallsPerJob) violations.push({ code: 'MAX_CALLS_EXCEEDED', actual: largestCalls, limit: policy.maxCallsPerJob })
+  if (largestInput > policy.maxInputCharsPerJob) violations.push({ code: 'MAX_INPUT_CHARS_EXCEEDED', actual: largestInput, limit: policy.maxInputCharsPerJob })
+  return { limits, scope: batchPlan ? 'batch' : 'job', warnings, violations, hardLimitExceeded: violations.length > 0, requiresOverride: violations.length > 0 }
 }
 
 /** Host orchestration module behind the small Trace Insight RPC interface. */
@@ -2276,6 +2300,7 @@ export class TraceInsightService {
     const settings = scoped.effective
     const selectedRoute = validateRoute(route ?? settings.defaultRoute)
     const coverageRole = mode
+    const analysisInputChars = Math.min(settings.auto.maxInputChars, settings.resourcePolicy.maxInputCharsPerJob)
     if (coverageRole === 'primary' && fromSeq !== history.semantic.coveredThroughSeq + 1) {
       throw Object.assign(new Error(`Primary backfill must start at Seq ${history.semantic.coveredThroughSeq + 1}.`), {
         code: 'PRIMARY_RANGE_GAP',
@@ -2285,7 +2310,7 @@ export class TraceInsightService {
       events,
       fromSeq,
       throughSeq: toSeq,
-      maxInputChars: evidenceCharsLimit(settings.auto.maxInputChars),
+      maxInputChars: evidenceCharsLimit(analysisInputChars),
       maxEvents: settings.auto.maxPendingEvents,
     })
     const report = this.analyzer({ rawSession: observation, sessionId })
@@ -2298,7 +2323,7 @@ export class TraceInsightService {
         segment,
         report: segmentReport,
         previousSummary,
-        maxChars: envelopeCharsLimit(settings.auto.maxInputChars),
+        maxChars: envelopeCharsLimit(analysisInputChars),
       })
       const cached = cacheCertain && !force ? this.cachedRun(history, stableInputHash(envelope), selectedRoute) : null
       if (cached) previousSummary = cached.output?.continuitySummary ?? previousSummary
@@ -2332,13 +2357,15 @@ export class TraceInsightService {
       route: selectedRoute,
       force: force === true,
     }
-    const previewToken = stableInputHash({ schemaVersion: 1, request: normalizedRequest, bindings })
     const cachedCalls = segments.filter(segment => segment.cached).length
+    const batchPlan = { ...planAnalysisBatches(segments, settings.resourcePolicy, envelopeCharsLimit(analysisInputChars)), analysisInputChars }
+    const estimatedInputChars = segments.reduce((sum, segment) => sum + (segment.cached ? 0 : segment.estimatedChars), 0)
+    const previewToken = stableInputHash({ schemaVersion: 2, request: normalizedRequest, bindings, segments, batchPlan })
     const resources = {
       plannedCalls: segments.length,
       modelCalls: segments.length - cachedCalls,
       cachedCalls,
-      inputChars: segments.reduce((sum, segment) => sum + segment.estimatedChars, 0),
+      inputChars: estimatedInputChars,
       tokens: null,
       durationMs: null,
       pricing: null,
@@ -2353,9 +2380,10 @@ export class TraceInsightService {
       calls: segments.length,
       modelCalls: segments.length - cachedCalls,
       cachedCalls,
-      estimatedInputChars: segments.reduce((sum, segment) => sum + segment.estimatedChars, 0),
+      estimatedInputChars,
       resources,
-      budgetAssessment: budgetAssessment(resources, settings.resourcePolicy),
+      batchPlan,
+      budgetAssessment: budgetAssessment(resources, settings.resourcePolicy, batchPlan),
       watermarkImpact: {
         currentThroughSeq: history.semantic.coveredThroughSeq,
         targetThroughSeq: coverageRole === 'primary' ? toSeq : history.semantic.coveredThroughSeq,
@@ -2428,6 +2456,7 @@ export class TraceInsightService {
         settingsSnapshot: preview.settingsSnapshot,
         bindings: preview.bindings,
         resourcePlan: preview.resources,
+        batchPlan: preview.batchPlan,
         budgetAssessment: preview.budgetAssessment,
         resourceOverride: overrideBudget ? {
           authorized: true,
@@ -2524,7 +2553,7 @@ export class TraceInsightService {
           segment,
           report: segmentReport,
           previousSummary,
-          maxChars: envelopeCharsLimit(job.settingsSnapshot.auto.maxInputChars),
+          maxChars: envelopeCharsLimit(job.batchPlan?.analysisInputChars ?? job.settingsSnapshot.auto.maxInputChars),
         })
         const result = await this.executeSemanticRun({
           sessionId,
@@ -2737,7 +2766,7 @@ export class TraceInsightService {
         complete: semanticThroughSeq >= closedThroughSeq,
       },
       activeJobs: asArray(history.jobs).filter(job => ['queued', 'running'].includes(job.status)).map(boundedJobSummary),
-      retry: history.semantic.retry ?? null,
+      retry: automaticRetrySummary(history, closedThroughSeq),
       nextTrigger,
       autoDecision: storedAutomaticDecision(history, scoped.effective, nextTrigger),
       live: {

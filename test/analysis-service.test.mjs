@@ -315,6 +315,118 @@ test('retryable automatic failures pause after three paid attempts', async () =>
   assert.equal(history.semantic.runs.length, 3)
 })
 
+test('paused retry resolves the exact automatic failure, not later backlog or a manual failure', async () => {
+  const events = Array.from({ length: 10 }, (_, index) => completedTurn(index + 1, index * 6)).flat()
+  let failing = true
+  let calls = 0
+  const { service, store, advanceTime } = serviceFor({ events,
+    settings: { defaultRoute: { provider: 'p', model: 'm' }, auto: { everyTurns: 1, maxPendingEvents: 20, maxInputChars: 4000 } },
+    modelRunner: async () => { calls++; if (failing) throw new SemanticModelError('offline', 'TRANSPORT'); return semanticResult() },
+  })
+  await enroll(store, 'exact-retry', 59)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await service.maybeRunPrimary('exact-retry', 'quiet-period')
+    advanceTime(4_000_000)
+  }
+  const before = await store.getSession('exact-retry')
+  const original = before.semantic.runs.at(-1)
+  assert.ok(original.toSeq < 59)
+  await store.updateSession('exact-retry', current => {
+    current.semantic.runs.push({ ...original, id: 'later-manual', mode: 'manual', toSeq: 59, completedAt: new Date(99_000_000).toISOString() })
+    return current
+  })
+  const status = await service.readStatus('exact-retry')
+  assert.equal(status.autoDecision.reason, 'retry-paused')
+  assert.equal(status.latest.semanticFailure.id, 'later-manual')
+  assert.equal(status.retry.runId, original.id)
+  assert.equal(status.retry.toSeq, original.toSeq)
+  assert.equal(calls, 3, 'reading retry state does not call a model')
+  failing = false
+  const request = { sessionId: 'exact-retry', mode: 'primary', fromSeq: status.retry.fromSeq, toSeq: status.retry.toSeq, route: status.retry.route }
+  const preview = await service.previewAnalysis(request)
+  const started = await service.startAnalysis({ ...request, previewToken: preview.previewToken })
+  await service.enqueue('exact-retry', async () => {})
+  assert.equal((await service.readAnalysisJob(started.jobId, 'exact-retry')).job.status, 'succeeded')
+  const after = await service.readStatus('exact-retry')
+  assert.equal(after.retry, null)
+  assert.equal(after.coverage.semanticThroughSeq, original.toSeq)
+  assert.equal(calls, 3 + preview.modelCalls)
+})
+
+test('multi-batch primary job automatically reaches the final range without an override', async () => {
+  const events = Array.from({ length: 12 }, (_, index) => completedTurn(index + 1, index * 6)).flat()
+  const observedBatches = []
+  const inputSizes = []
+  const { service, store } = serviceFor({ events,
+    settings: { defaultRoute: { provider: 'p', model: 'm' }, auto: { maxPendingEvents: 20, maxInputChars: 4000 },
+      resourcePolicy: { maxCallsPerJob: 1, maxInputCharsPerJob: 4000 } },
+    modelRunner: async (_llm, request) => {
+      const status = await service.readStatus('all-batches')
+      observedBatches.push(status.activeJobs[0].batchProgress.current)
+      inputSizes.push(JSON.stringify(request.envelope).length)
+      return semanticResult('batch complete')
+    },
+  })
+  const request = { sessionId: 'all-batches', mode: 'primary', fromSeq: 0, toSeq: 71, route: { provider: 'p', model: 'm' }, force: true }
+  const preview = await service.previewAnalysis(request)
+  assert.ok(preview.batchPlan.totalBatches >= 3)
+  assert.equal(preview.budgetAssessment.hardLimitExceeded, false)
+  const started = await service.startAnalysis({ ...request, previewToken: preview.previewToken })
+  await service.enqueue('all-batches', async () => {})
+  const job = (await service.readAnalysisJob(started.jobId, 'all-batches')).job
+  assert.equal(job.status, 'succeeded')
+  assert.equal(job.batchProgress.completed, preview.batchPlan.totalBatches)
+  assert.deepEqual(observedBatches, preview.batchPlan.batches.map(batch => batch.index))
+  assert.ok(inputSizes.every(size => size <= 4000))
+  assert.equal((await store.getSession('all-batches')).semantic.coveredThroughSeq, 71)
+  assert.equal(job.resourceOverride, null)
+})
+
+test('failure in a later batch preserves previous work and stops every following batch', async () => {
+  const events = Array.from({ length: 12 }, (_, index) => completedTurn(index + 1, index * 6)).flat()
+  let calls = 0
+  const { service, store } = serviceFor({ events,
+    settings: { defaultRoute: { provider: 'p', model: 'm' }, auto: { maxPendingEvents: 20, maxInputChars: 4000 }, resourcePolicy: { maxCallsPerJob: 1 } },
+    modelRunner: async () => { if (++calls === 2) throw new SemanticModelError('batch two failed', 'TRANSPORT'); return semanticResult() },
+  })
+  const request = { sessionId: 'failed-batch', mode: 'primary', fromSeq: 0, toSeq: 71, route: { provider: 'p', model: 'm' } }
+  const preview = await service.previewAnalysis(request)
+  const started = await service.startAnalysis({ ...request, previewToken: preview.previewToken })
+  await service.enqueue('failed-batch', async () => {})
+  const job = (await service.readAnalysisJob(started.jobId, 'failed-batch')).job
+  assert.equal(job.status, 'failed')
+  assert.equal(job.batchProgress.completed, 1)
+  assert.equal(calls, 2)
+  assert.equal((await store.getSession('failed-batch')).semantic.coveredThroughSeq, preview.segments[0].toSeq)
+  assert.equal(job.retrySegment.fromSeq, preview.segments[1].fromSeq)
+  assert.equal(job.segmentStatusCounts.planned, preview.segments.length - 2)
+})
+
+test('cancelling during a later batch stops the remainder without losing completed batches', async () => {
+  const events = Array.from({ length: 12 }, (_, index) => completedTurn(index + 1, index * 6)).flat()
+  let calls = 0
+  const waiting = deferred()
+  const { service, store } = serviceFor({ events,
+    settings: { defaultRoute: { provider: 'p', model: 'm' }, auto: { maxPendingEvents: 20, maxInputChars: 4000 }, resourcePolicy: { maxCallsPerJob: 1 } },
+    modelRunner: async (_llm, { signal }) => {
+      if (++calls === 1) return semanticResult()
+      waiting.resolve()
+      return new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new SemanticModelError('cancelled', 'MODEL_ABORTED')), { once: true }))
+    },
+  })
+  const request = { sessionId: 'cancel-batch', mode: 'primary', fromSeq: 0, toSeq: 71, route: { provider: 'p', model: 'm' } }
+  const preview = await service.previewAnalysis(request)
+  const started = await service.startAnalysis({ ...request, previewToken: preview.previewToken })
+  await waiting.promise
+  await service.cancelAnalysis(started.jobId, { sessionId: 'cancel-batch' })
+  await service.enqueue('cancel-batch', async () => {})
+  const job = (await service.readAnalysisJob(started.jobId, 'cancel-batch')).job
+  assert.equal(job.status, 'cancelled')
+  assert.equal(job.batchProgress.completed, 1)
+  assert.equal(calls, 2)
+  assert.equal((await store.getSession('cancel-batch')).semantic.coveredThroughSeq, preview.segments[0].toSeq)
+})
+
 test('non-retryable model output pauses immediately and preserves partial failure evidence', async () => {
   const events = completedTurn(1, 0)
   let modelCalls = 0
@@ -1669,7 +1781,7 @@ test('cross-layer conflict drilldown paginates every exact member beyond its bou
   assert.ok(seen.some(ref => ref.checkpointId === 'cp-7' && ref.findingIndex === 0 && ref.evidenceIndex === 0))
 })
 
-test('manual resource guards require an audited override while preserving idempotency', async () => {
+test('manual batches preserve explicit override audit requirements and idempotency', async () => {
   const events = Array.from({ length: 8 }, (_, index) => completedTurn(index + 1, index * 6)).flat()
   let modelCalls = 0
   const { service, store } = serviceFor({
@@ -1684,8 +1796,9 @@ test('manual resource guards require an audited override while preserving idempo
   const request = { sessionId: 'session-budget', mode: 'supplemental', fromSeq: 0, toSeq: 47, route: { provider: 'p', model: 'm' } }
   const preview = await service.previewAnalysis(request)
   assert.ok(preview.resources.modelCalls > 1)
-  assert.equal(preview.budgetAssessment.hardLimitExceeded, true)
-  await assert.rejects(service.startAnalysis({ ...request, previewToken: preview.previewToken }), error => error?.code === 'RESOURCE_LIMIT_EXCEEDED')
+  assert.equal(preview.budgetAssessment.hardLimitExceeded, false)
+  assert.equal(preview.budgetAssessment.scope, 'batch')
+  assert.equal(preview.batchPlan.totalBatches, preview.segments.length)
   await assert.rejects(service.startAnalysis({ ...request, previewToken: preview.previewToken, overrideBudget: true }), error => error?.code === 'RESOURCE_OVERRIDE_REASON_REQUIRED')
   const started = await service.startAnalysis({ ...request, previewToken: preview.previewToken, overrideBudget: true, overrideReason: '经人工批准进行全段复盘', idempotencyKey: 'budget-job' })
   const duplicate = await service.startAnalysis({ ...request, previewToken: preview.previewToken, overrideBudget: true, overrideReason: '经人工批准进行全段复盘', idempotencyKey: 'budget-job' })

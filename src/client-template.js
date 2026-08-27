@@ -74,6 +74,9 @@ const STYLE_TEXT = `
 .tiNotice { margin-top: 12px; padding: 10px 13px; border: 1px solid #cfd8f2; border-left: 3px solid var(--ti-program); border-radius: 10px; color: #3d4f86; background: #f2f5ff; font-size: 11px; line-height: 1.65; }
 .tiNotice--warning { border-color: #ecd3a0; border-left-color: var(--ti-pending); background: var(--ti-pending-soft); color: #7d5217; }
 .tiNotice--error { border-color: #efc3cb; border-left-color: var(--ti-danger); background: var(--ti-danger-soft); color: #8f2f3f; }
+.tiRetryNotice { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.tiRetryNotice > div { flex: 1 1 220px; }
+.tiRetryNotice > button { flex: 0 0 auto; }
 .tiConsole { display: block; margin-top: 12px; border-radius: 14px; overflow: hidden; background: linear-gradient(165deg, #1b2545 0%, #141c34 58%, #121a2f 100%); color: var(--ti-console-ink); box-shadow: var(--ti-shadow); }
 .tiConsole > summary { list-style: none; }
 .tiConsole > summary::-webkit-details-marker { display: none; }
@@ -850,6 +853,7 @@ function SegmentAnalysisPanel({
   preview, previewLoading, previewReady, startLoading, error,
   job, blockedByOtherJob, supportsJobs, overrideBudget, overrideReason,
   onOverrideBudget, onOverrideReason, onStart, onCancel, onRetry, onRetryPreview, onClose,
+  primaryRetry = false,
 }) {
   const facts = previewFacts(preview)
   const progress = jobProgress(job)
@@ -857,32 +861,34 @@ function SegmentAnalysisPanel({
   const terminal = Boolean(job) && ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(job.status)
   const running = Boolean(job) && !terminal
   const budget = preview?.budgetAssessment || {}
-  const warnings = [...(budget.warnings || []), ...(budget.violations || [])]
+  const warnings = budgetMessages(budget)
   const cannotStart = !previewReady || startLoading || running || blockedByOtherJob
     || (budget.hardLimitExceeded && (!overrideBudget || !overrideReason.trim()))
   return h('section', { className: 'tiSegmentAnalysis', 'aria-label': `分析 ${rangeLabel(item)}` },
     h('div', { className: 'tiSegmentAnalysisHead' },
       h('div', null,
-        h('div', { className: 'tiSegmentAnalysisTitle' }, '分析此段'),
-        h('div', { className: 'tiSegmentAnalysisMeta' }, `${rangeLabel(item)} · 结果将作为补充分析保留，不改变正式分析进度`),
+        h('div', { className: 'tiSegmentAnalysisTitle' }, primaryRetry ? '手动重试' : '分析此段'),
+        h('div', { className: 'tiSegmentAnalysisMeta' }, `${rangeLabel(item)} · ${primaryRetry ? '只重试失败段，成功后推进正式分析进度；不包含后续积压' : '结果将作为补充分析保留，不改变正式分析进度'}`),
       ),
       h('button', { className: 'tiButton tiButton--quiet', type: 'button', onClick: onClose }, '收起'),
     ),
     job ? h('div', { className: `tiJob${job.status === 'failed' || job.status === 'interrupted' ? ' tiJob--failed' : terminal ? ' tiJob--done' : ''}` },
       h('div', { className: 'tiJobHead' },
-        h('div', { className: 'tiJobTitle' }, terminal && job.status === 'succeeded' ? '分析结果已生成' : '正在分析此段'),
+        h('div', { className: 'tiJobTitle' }, terminal ? job.status === 'succeeded' ? '分析结果已生成' : '本段分析未完成' : '正在分析此段'),
         h('div', { className: 'tiJobState' }, jobStateLabel(job.status)),
       ),
       progress.total ? h('progress', { className: 'tiProgress', max: 100, value: progress.percent, role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': Math.round(progress.percent), 'aria-label': '此段分析进度' }) : null,
       h('div', { className: 'tiJobDetail' }, terminal && job.status === 'succeeded'
-        ? '模型分析结果已显示在本段规则分析之后。'
+        ? primaryRetry ? '失败段已完成，正式分析进度已推进。' : '模型分析结果已显示在本段规则分析之后。'
         : `${progress.completed}/${progress.total || '未知'} 段完成${activeSegment ? ` · 当前 Seq ${activeSegment.fromSeq}–${activeSegment.toSeq}` : ''}${job.error?.message ? ` · ${job.error.message}` : ''}`),
+      job.batchProgress ? h('div', { className: 'tiJobDetail' }, batchProgressText(job)) : null,
+      error ? h('div', { className: 'tiNotice tiNotice--error' }, error) : null,
       running && supportsJobs ? h('button', { className: 'tiButton', type: 'button', onClick: onCancel }, job.status === 'cancelling' ? '正在取消…' : '取消分析') : null,
       terminal && job.status !== 'succeeded' ? h('button', { className: 'tiButton', type: 'button', onClick: onRetry }, '重新准备此段') : null,
     ) : h(React.Fragment, null,
       h('label', { className: 'tiField' },
         h('span', { className: 'tiLabel' }, '本次使用的模型'),
-        h('select', { className: 'tiSelect', value: modelKey, onChange: event => onModelChange(event.target.value) }, ...modelOptions(models, true)),
+        h('select', { className: 'tiSelect', value: modelKey, disabled: startLoading, onChange: event => onModelChange(event.target.value) }, ...modelOptions(models, true)),
       ),
       previewLoading ? h('div', { className: 'tiSegmentAnalysisPreparing', role: 'status' }, '正在准备范围与调用信息；此步骤不会调用模型。') : null,
       preview ? h('div', { className: 'tiSegmentAnalysisFacts' },
@@ -891,7 +897,8 @@ function SegmentAnalysisPanel({
         facts.chars ? h('span', null, `预计 ${formatNumber(facts.chars)} 字符`) : null,
         facts.cache !== undefined ? h('span', null, `缓存 ${facts.cache} 段`) : null,
       ) : null,
-      warnings.length ? h('div', { className: `tiBudgetWarning${budget.hardLimitExceeded ? ' tiBudgetHard' : ''}` }, warnings.map(value => typeof value === 'string' ? value : value.message || value.code).join('；')) : null,
+      preview?.batchPlan ? h('div', { className: 'tiSegmentAnalysisHint' }, batchPlanText(preview)) : null,
+      warnings.length ? h('div', { className: `tiBudgetWarning${budget.hardLimitExceeded ? ' tiBudgetHard' : ''}` }, warnings.join('；')) : null,
       budget.hardLimitExceeded ? h(React.Fragment, null,
         h('label', { className: 'tiCheck' }, h('input', { type: 'checkbox', checked: overrideBudget, onChange: event => onOverrideBudget(event.target.checked) }), h('span', null, '允许本次分析超过资源上限')),
         h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '超限原因'), h('textarea', { className: 'tiInput', rows: 2, value: overrideReason, onChange: event => onOverrideReason(event.target.value) })),
@@ -899,14 +906,14 @@ function SegmentAnalysisPanel({
       h('details', { className: 'tiSegmentAnalysisMore' },
         h('summary', null, '更多选项'),
         h('label', { className: 'tiCheck' },
-          h('input', { type: 'checkbox', checked: forceRun, onChange: event => onForceChange(event.target.checked) }),
+          h('input', { type: 'checkbox', checked: forceRun, disabled: startLoading, onChange: event => onForceChange(event.target.checked) }),
           h('span', null, '即使相同输入和模型已有结果，也重新调用模型'),
         ),
       ),
       blockedByOtherJob ? h('div', { className: 'tiSegmentAnalysisPreparing' }, '另一个区间正在分析；完成或取消后才能启动本段。') : null,
       error ? h('div', { className: 'tiNotice tiNotice--error' }, error, h('button', { className: 'tiButton', type: 'button', onClick: onRetryPreview }, '重新准备')) : null,
       h('div', { className: 'tiSegmentAnalysisActions' },
-        h('button', { className: 'tiButton tiButton--semantic', type: 'button', disabled: cannotStart, onClick: onStart }, startLoading ? '正在启动…' : '开始分析'),
+        h('button', { className: 'tiButton tiButton--semantic', type: 'button', disabled: cannotStart, onClick: onStart }, startLoading ? '正在启动…' : primaryRetry ? '确认重试' : '开始分析'),
         h('span', { className: 'tiSegmentAnalysisHint' }, previewReady ? '确认后才会调用模型' : previewLoading ? '正在准备' : '等待可用模型'),
       ),
     ),
@@ -1412,6 +1419,10 @@ function normalizeJob(value, fallback = {}) {
 
 function jobIsTerminal(status) {
   return ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(status)
+}
+
+function latestStoredJob(jobs) {
+  return [...jobs].sort((left, right) => semanticVersionTime(right) - semanticVersionTime(left)).at(0) || null
 }
 
 function commitJobIfFresh(current, value, fallback = {}) {
@@ -1925,6 +1936,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
   const [manualAttempt, setManualAttempt] = useState(0)
   const [segmentAnalysisItemId, setSegmentAnalysisItemId] = useState('')
   const [segmentAnalysisError, setSegmentAnalysisError] = useState('')
+  const [automaticRetryOpen, setAutomaticRetryOpen] = useState(false)
   const segmentPreviewRequested = useRef('')
   const [job, setJob] = useState(null)
   const [liveItems, setLiveItems] = useState([])
@@ -2599,7 +2611,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
   const persistedJobs = data?.history?.jobs || []
   const persistedJob = data?.status?.activeJobs?.[0]
     || persistedJobs.find?.(candidate => ['queued', 'running', 'cancelling'].includes(candidate.status))
-    || persistedJobs.at?.(-1)
+    || latestStoredJob(persistedJobs)
   const persistedJobSignature = persistedJob
     ? JSON.stringify([persistedJob.id || persistedJob.jobId, persistedJob.status, persistedJob.revision, persistedJob.progress, persistedJob.error])
     : ''
@@ -3262,8 +3274,15 @@ function TraceInsightView({ useSession, api, sessionId }) {
       !investigationLimited ? null : h('div', { className: 'tiNotice tiNotice--warning' }, '当前 DSH 版本仅支持部分复盘功能；不可用的分页、运行对比或概览入口会被禁用。'),
       decision.reason === 'waiting-for-model' ? h('div', { className: 'tiNotice tiNotice--warning' }, '规则分析正在持续工作；尚未设置默认分析模型。保存分析模型后，自动策略会从未分析区间起点继续。') : null,
       decision.reason === 'manual-backfill-required' ? h('div', { className: 'tiNotice tiNotice--warning' }, '历史中存在未分析区间。查看本页不会调用模型；请在“手动分析”中选择“补齐未分析区间”，确认范围后再启动。') : null,
-      decision.reason === 'retry-backoff' ? h('div', { className: 'tiNotice tiNotice--warning' }, `上次分析失败，将在 ${formatTime(decision.retryAt || retry?.notBefore)} 自动重试。也可以换模型进行补充分析，但不会改变正式分析进度。`) : null,
-      decision.reason === 'retry-paused' ? h('div', { className: 'tiNotice tiNotice--error' }, `自动重试已暂停（${decision.retryCode || retry?.code || 'ANALYSIS_FAILED'}，第 ${decision.retryAttempt || retry?.attempt || '?'} 次）。请检查模型或输入设置，再从失败段恢复。`) : null,
+      ['retry-backoff', 'retry-paused'].includes(decision.reason) ? h('div', { className: `tiNotice tiRetryNotice ${decision.reason === 'retry-paused' ? 'tiNotice--error' : 'tiNotice--warning'}` },
+        h('div', null, decision.reason === 'retry-paused'
+          ? `自动重试已暂停（${decision.retryCode || retry?.code || 'ANALYSIS_FAILED'}，第 ${decision.retryAttempt || retry?.attempt || '?'} 次）。可手动重试失败段。`
+          : `上次分析失败，将在 ${formatTime(decision.retryAt || retry?.notBefore)} 自动重试，也可手动重试失败段。`),
+        h('button', { className: 'tiButton', type: 'button', disabled: !supportsPreview || !supportsJobs || !supportsStatus, 'aria-expanded': automaticRetryOpen,
+          onClick: () => { setAutomaticRetryOpen(true); ensureOperationsData() } }, '手动重试'),
+      ) : null,
+      automaticRetryOpen ? h(AutomaticRetryPanel, { key: sessionId, api, sessionId, models, initialRoute: retry?.route || settings.effective?.defaultRoute,
+        onCompleted: refreshAfterCurrent, onClose: () => setAutomaticRetryOpen(false) }) : null,
       latestDiagnostic ? h('div', { className: 'tiNotice tiNotice--error' }, diagnosticNoticeText(latestDiagnostic)) : null,
       error ? h('div', { className: 'tiNotice tiNotice--error' }, `${error}${stale && data ? '；已保留上次成功数据。' : ''}`) : null,
       statusError ? h('div', { className: 'tiNotice tiNotice--error' }, `状态刷新失败：${statusError}；已保留上次成功数据。`) : null,
@@ -3484,10 +3503,10 @@ function TraceInsightView({ useSession, api, sessionId }) {
                   h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '最长间隔分钟'), h('input', { className: 'tiInput', type: 'number', min: 1, max: 60, value: provMaxAgeMin, onChange: event => setProvMaxAgeMin(event.target.value) })),
                   h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '每 Turn 调用上限'), h('input', { className: 'tiInput', type: 'number', min: 1, max: 100, value: provMaxCallsPerTurn, onChange: event => setProvMaxCallsPerTurn(event.target.value) })),
                 ),
-                h('div', { className: 'tiEffective' }, h('strong', null, '资源限制：'), ' 只按实际模型调用次数与输入字符限制单次后台分析；超过上限时必须填写原因。'),
+                h('div', { className: 'tiEffective' }, h('strong', null, '分批限制：'), ' 每批按模型调用次数与输入字符控制大小，完成后自动执行下一批；开始前会展示整项任务的预计用量。'),
                 h('div', { className: 'tiTwo' },
-                  h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '单次分析调用上限'), h('input', { className: 'tiInput', type: 'number', min: 1, value: maxCallsPerJob, onChange: event => setMaxCallsPerJob(event.target.value) })),
-                  h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '单次分析输入字符上限'), h('input', { className: 'tiInput', type: 'number', min: 1000, value: maxInputCharsPerJob, onChange: event => setMaxInputCharsPerJob(event.target.value) })),
+                  h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '每批调用上限'), h('input', { className: 'tiInput', type: 'number', min: 1, value: maxCallsPerJob, onChange: event => setMaxCallsPerJob(event.target.value) })),
+                  h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '每批输入字符上限'), h('input', { className: 'tiInput', type: 'number', min: 4000, value: maxInputCharsPerJob, onChange: event => setMaxInputCharsPerJob(event.target.value) })),
                 ),
                 h('div', { className: 'tiTwo' },
                   h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '调用警告阈值'), h('input', { className: 'tiInput', type: 'number', min: 1, value: warnCallsPerJob, onChange: event => setWarnCallsPerJob(event.target.value) })),
@@ -3551,7 +3570,11 @@ function TraceInsightView({ useSession, api, sessionId }) {
                     h('div', { className: 'tiPreviewFact' }, h('span', null, '缓存命中'), h('strong', null, facts.cache === undefined ? '服务未提供' : `${facts.cache} 段`)),
                   ),
                   h('div', { className: 'tiCapabilities' }, manualPreview.privacyNote || (manualMode === 'primary' ? '成功完成的区间会按顺序推进正式分析进度；遇到失败时停止。' : '结果会保存为补充分析，不改变正式分析进度。')),
-                  (budgetWarnings.length || budgetAssessment.violations?.length) ? h('div', { className: `tiBudgetWarning${budgetAssessment.hardLimitExceeded ? ' tiBudgetHard' : ''}` }, `资源护栏：${[...budgetWarnings, ...(budgetAssessment.violations || [])].map(item => typeof item === 'string' ? item : `${item.message || item.code}${Number.isFinite(item.actual) ? `（实际 ${formatNumber(item.actual)} / 阈值 ${formatNumber(item.limit)}）` : ''}`).join('；')}`) : null,
+                  manualPreview.batchPlan ? h('div', { className: 'tiCapabilities' }, batchPlanText(manualPreview)) : null,
+                  (budgetWarnings.length || budgetAssessment.violations?.length) ? h('div', { className: `tiBudgetWarning${budgetAssessment.hardLimitExceeded ? ' tiBudgetHard' : ''}` },
+                    budgetMessages(budgetAssessment).join('；'),
+                    budgetAssessment.hardLimitExceeded ? h('div', null, '单段仍超出每批用量限制，请调整单段大小后重新预览。') : null,
+                  ) : null,
                   budgetAssessment.hardLimitExceeded ? h(React.Fragment, null,
                     h('label', { className: 'tiCheck' }, h('input', { type: 'checkbox', checked: overrideBudget, onChange: event => setOverrideBudget(event.target.checked) }), h('span', null, '允许本次分析超过资源上限（原因会记录在分析历史中）')),
                     h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '超限原因（必填）'), h('textarea', { className: 'tiInput', rows: 2, value: overrideReason, onChange: event => setOverrideReason(event.target.value) })),
@@ -3559,6 +3582,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
                   h('button', { className: 'tiButton tiButton--semantic', type: 'button', disabled: operationRunning('manual-start') || manualPreviewSignature !== currentManualSignature || Boolean(job) || (budgetAssessment.hardLimitExceeded && (!overrideBudget || !overrideReason.trim())), onClick: startManual }, operationRunning('manual-start') ? '正在启动…' : supportsJobs ? '启动后台分析' : '执行补充分析'),
                 ) : null,
                 job ? h('div', { className: `tiJob${job.status === 'failed' || job.status === 'interrupted' ? ' tiJob--failed' : jobTerminal ? ' tiJob--done' : ''}` },
+                  job.batchProgress ? h('div', { className: 'tiJobDetail' }, batchProgressText(job)) : null,
                   h('div', { className: 'tiJobHead' },
                     h('div', { className: 'tiJobTitle' }, job.mode === 'primary' ? '补齐未分析区间任务' : '补充分析任务'),
                     h('div', { className: 'tiJobState' }, jobStateLabel(job.status)),

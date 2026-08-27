@@ -31,15 +31,43 @@ export const DEFAULT_ANALYSIS_SETTINGS = Object.freeze({
     timeoutMs: 120_000,
   }),
   resourcePolicy: Object.freeze({
-    // These are deterministic resource guards, not price estimates. A manual
-    // job that exceeds either hard ceiling requires an explicit audited
-    // override at start time.
+    // Preserve persisted key names. Async jobs apply these ceilings per batch,
+    // then continue the remaining batches within the confirmed task range.
+    // Warning thresholds describe the total task, not a model context window.
     maxCallsPerJob: 24,
     maxInputCharsPerJob: 400_000,
     warnCallsPerJob: 8,
     warnInputCharsPerJob: 120_000,
   }),
 })
+
+export function planAnalysisBatches(segments, policy, maxInputCharsPerCall) {
+  if (!Number.isSafeInteger(maxInputCharsPerCall) || maxInputCharsPerCall <= 0
+    || maxInputCharsPerCall > policy.maxInputCharsPerJob || policy.maxCallsPerJob < 1) {
+    throw new RangeError('A bounded analysis segment must fit within one batch.')
+  }
+  const batches = []
+  let batch
+  for (const [index, segment] of segments.entries()) {
+    // Reserve the full bounded envelope for every segment, even a predicted
+    // cache hit. Later model continuity cannot make a batch exceed its cap.
+    if (!batch || batch.reservedCalls >= policy.maxCallsPerJob
+      || batch.reservedInputChars + maxInputCharsPerCall > policy.maxInputCharsPerJob) {
+      batch = { index: batches.length, firstSegment: index, lastSegment: index,
+        fromSeq: segment.fromSeq, toSeq: segment.toSeq, reservedCalls: 0, reservedInputChars: 0,
+        modelCalls: 0, estimatedInputChars: 0 }
+      batches.push(batch)
+    }
+    batch.lastSegment = index
+    batch.toSeq = segment.toSeq
+    batch.reservedCalls += 1
+    batch.reservedInputChars += maxInputCharsPerCall
+    batch.modelCalls += segment.cached ? 0 : 1
+    batch.estimatedInputChars += segment.cached ? 0 : segment.estimatedChars
+  }
+  return { batches, totalBatches: batches.length, maxInputCharsPerCall,
+    limits: { calls: policy.maxCallsPerJob, inputChars: policy.maxInputCharsPerJob } }
+}
 
 function asArray(value) {
   return Array.isArray(value) ? value : []

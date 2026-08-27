@@ -230,6 +230,30 @@ test('legacy bundle falls back to the 解读 conversation view on hosts without 
   assert.equal(registration.options.label(), '解读')
   assert.equal(typeof registration.component, 'function')
 })
+
+test('paused automatic analysis has a direct inline retry action without navigating to settings', async () => {
+  const harness = interactiveReactHarness()
+  const plugin = await loadBundle(harness.react)
+  let registration
+  plugin.apply({ effect(callback) { return callback() }, connection: {}, sessions: {},
+    slots: { inject(_name, callback) { callback() }, register(options, component) { registration = { options, component }; return () => {} } } })
+  const api = {
+    async readCapabilities() { return { endpoints: ['insight/bootstrap', 'insight/status', 'analysis/preview', 'analysis/start', 'analysis/job', 'analysis/cancel'] } },
+    async readBootstrap() { const value = boundedBootstrap(); value.status.autoDecision = { reason: 'retry-paused', retryAttempt: 3, retryCode: 'TRANSPORT' }; value.status.retry = { paused: true, fromSeq: 10, toSeq: 15, route: { provider: 'p', model: 'm' } }; return value },
+    async readModels() { return { models: [] } },
+  }
+  const props = { useSession: () => ({ nodes: [{ seq: 20 }] }), api, sessionId: 'paused-inline' }
+  harness.render(registration.component, props); await new Promise(resolve => setImmediate(resolve))
+  let tree = harness.render(registration.component, props)
+  const action = findTreeNodes(tree, node => node.type === 'button' && treeText(node) === '手动重试')[0]
+  assert.ok(action)
+  assert.equal(action.props.disabled, false)
+  action.props.onClick()
+  tree = harness.render(registration.component, props)
+  assert.ok(findTreeNodes(tree, node => node.type?.name === 'AutomaticRetryPanel')[0])
+  assert.ok(findTreeNodes(tree, node => node.props?.['aria-label'] === '复盘时间线')[0])
+  assert.equal(findTreeNodes(tree, node => node.props?.['aria-label'] === '解读设置与运维').length, 0)
+})
 test('client operations use capability-advertised P0 RPC contracts with exact scope', async () => {
   const plugin = await loadBundle()
   let registration
@@ -1612,7 +1636,7 @@ test('generated client includes the P0 state, timeline, controlled analysis, evi
   assert.match(source, /historyAdvanced/)
   assert.match(source, /modelCalls \?\? preview\?\.estimatedCalls/)
   assert.match(source, /currentJobSegment/)
-  assert.match(source, /persistedJobs\.at\?\.\(-1\)/)
+  assert.match(source, /latestStoredJob\(persistedJobs\)/)
   assert.match(source, /PREVIEW_STALE/)
   assert.match(source, /模型分析已取消/)
   assert.match(source, /cancelRequestedAt \? 'cancelling'/)

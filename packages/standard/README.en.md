@@ -13,6 +13,8 @@ Review DeepSeek Harness sessions in a right sidebar. Use **解读** in the sessi
 
 Rule-based analysis runs locally without model calls. Model analysis uses a provider configured in DSH and runs only when requested manually or when enabled automatic-analysis conditions are met. The plugin does not modify the session being analyzed.
 
+After automatic analysis pauses, use **手动重试** beside the notice to review the failed segment's model and expected usage in place. Longer backfills show the total expected usage and batch count before confirmation, then continue through batches automatically within each batch's call and input-character limits. A call failure or cancellation stops the remainder without discarding completed progress.
+
 ## Install
 
 Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, or 0.1.1-rc.2.
