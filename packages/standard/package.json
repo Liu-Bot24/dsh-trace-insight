@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-trace-insight",
-  "version": "1.5.0-dev.2",
+  "version": "1.5.0-dev.3",
   "description": "Read-only trajectory analysis in a lightweight, patch-free DeepSeek Harness sidebar.",
   "type": "module",
   "main": "./index.js",

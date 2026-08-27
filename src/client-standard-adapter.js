@@ -6,8 +6,6 @@ const ADAPTER_STYLE_TEXT = `
 .tiDock { pointer-events: auto; position: absolute; top: 0; bottom: 0; right: 0; width: var(--ti-dock-width); display: flex; flex-direction: column; min-width: 0; background: var(--dsw-alias-bg-base, #f5f7fb); border-left: 1px solid var(--dsw-alias-border-l2, #dce2eb); color: var(--dsw-alias-label-primary, #182136); font-family: var(--dsw-font-family, sans-serif); box-sizing: border-box; }
 .tiDock[hidden] { display: none; }
 .tiDock[data-drawer="true"] { box-shadow: -8px 0 28px #0003; }
-.tiDockToolbar { flex: 0 0 38px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--dsw-alias-border-l2, #dce2eb); font-size: 12px; }
-.tiDockClose { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 4px 8px; font-size: 20px; border-radius: 5px; }
 .tiDockContent { flex: 1; min-height: 0; min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 .tiDockContent > * { min-height: 0; flex: 1; }
 .tiDockResize { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; z-index: 2; }
@@ -16,7 +14,7 @@ html[data-ti-dock-dragging], html[data-ti-dock-dragging] * { cursor: col-resize 
 .tiDockNotice { padding: 10px 14px; margin: 0; font-size: 12px; }
 .tiToggle { border: 1px solid var(--dsw-alias-border-l2); min-width: 82px; height: 32px; color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family); cursor: pointer; background: transparent; border-radius: 9px; justify-content: center; align-items: center; gap: 7px; padding: 5px 10px 5px 12px; font-size: 13px; font-weight: 500; line-height: 20px; display: inline-flex; }
 .tiToggle:hover, .tiToggle[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-hover); }
-.tiToggle:focus-visible, .tiDockClose:focus-visible { outline: 3px solid #3a56d448; outline-offset: 2px; }
+.tiToggle:focus-visible { outline: 3px solid #3a56d448; outline-offset: 2px; }
 .tiToggleIcon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; }
 `
 
@@ -35,6 +33,21 @@ function DockToggle({ dock }) {
     h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 2.5 }), h('path', { d: 'M15 4v16' })))
 }
 
+function bindDockDrawerDismissals(doc, close) {
+  const onPointerDown = event => {
+    if (!event.defaultPrevented && !event.target.closest?.('.tiDock, .tiToggle, [role="dialog"], [role="menu"], [role="listbox"]')) close()
+  }
+  const onKeyDown = event => {
+    if (event.key === 'Escape' && !event.defaultPrevented && !event.target.closest?.('[role="dialog"], [role="menu"], [role="listbox"]')) close()
+  }
+  doc.addEventListener('pointerdown', onPointerDown)
+  doc.addEventListener('keydown', onKeyDown)
+  return () => {
+    doc.removeEventListener('pointerdown', onPointerDown)
+    doc.removeEventListener('keydown', onKeyDown)
+  }
+}
+
 function DockFrame({ dock, useSessions, renderSlot }) {
   const state = useDockSnapshot(dock)
   const sessionId = useSessions(s => s.current !== undefined && s.byId[s.current]?.blank === false ? s.current : undefined)
@@ -46,6 +59,9 @@ function DockFrame({ dock, useSessions, renderSlot }) {
   }, [dock])
   React.useLayoutEffect(() => { dock.setSession(sessionId) }, [dock, sessionId])
   useEffect(() => { if (state.visible) setVisited(true) }, [state.visible])
+  useEffect(() => {
+    if (state.visible && state.drawer) return bindDockDrawerDismissals(document, () => dock.setOpen(false))
+  }, [dock, state.visible, state.drawer])
   if (!host) return null
   const { createPortal } = require('react-dom')
   const close = () => {
@@ -62,10 +78,7 @@ function DockFrame({ dock, useSessions, renderSlot }) {
         close()
       }
     },
-  }, h('div', { className: 'tiDockToolbar' },
-    h('span', null, 'Trace Insight · 解读'),
-    h('button', { className: 'tiDockClose', type: 'button', 'aria-label': '关闭解读侧栏', onClick: close }, '×')),
-  h('div', {
+  }, h('div', {
     className: 'tiDockResize', role: 'separator', tabIndex: 0, 'aria-orientation': 'vertical',
     'aria-label': '调整解读侧栏宽度', 'aria-valuemin': state.min, 'aria-valuemax': state.max, 'aria-valuenow': state.width,
     onPointerDown: event => dock.startDrag(event),
