@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-trace-insight",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Read-only trajectory analysis in a lightweight, patch-free DeepSeek Harness sidebar.",
   "type": "module",
   "main": "./index.js",
@@ -24,7 +24,9 @@
     "directory": "packages/standard"
   },
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-connection",
@@ -35,11 +37,18 @@
       "platform": "web"
     }
   },
-  "engines": { "node": ">=22.19.0" },
-  "keywords": ["deepseek-harness", "dsh-plugin", "trajectory-analysis", "read-only"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "trajectory-analysis",
+    "read-only"
+  ],
   "license": "MIT",
   "dshCompatibility": {
-    "version": "0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2",
+    "version": "0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1",
     "surface": "web"
   }
 }

@@ -15,16 +15,18 @@ Rule-based analysis runs locally without model calls. Model analysis uses a prov
 
 After automatic analysis pauses, use **手动重试** beside the notice to review the failed segment's model and expected usage in place. Longer backfills show the total expected usage and batch count before confirmation, then continue through batches automatically within each batch's call and input-character limits. A call failure or cancellation stops the remainder without discarding completed progress.
 
+The **Enable trajectory analysis** switch at the top of the sidebar controls model analysis for every session on this device. Changes save immediately and survive restarts. Turning it off blocks automatic, provisional, and manual model calls, cancels queued analysis, and attempts to abort active requests. Requests already sent to a provider may still be billed. History, local rule results, model selection, and automatic policies are preserved. Enabling it again resumes the existing policies.
+
 ## Install
 
-Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, or 0.1.1-rc.2.
+Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, 0.1.1-rc.2, or 0.1.2-rc.1.
 
 DSH's command-line plugin manager also requires `pnpm`. If it is not installed, run `npm install -g pnpm` first.
 
-Install the patch-free sidebar 1.5.0:
+Install the patch-free sidebar 1.6.0:
 
 ```shell
-dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.5.0/dsh-plugin-trace-insight-standard-1.5.0.tgz
+dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.0/dsh-plugin-trace-insight-standard-1.6.0.tgz
 ```
 
 You can also install a local `.tgz` using its absolute path. Keep that file in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`, because DSH retains the reference. `DSH_HOME` defaults to `.dsh` in your user directory.

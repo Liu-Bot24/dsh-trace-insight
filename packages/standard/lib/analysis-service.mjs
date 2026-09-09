@@ -269,6 +269,7 @@ function applySettingsOverride(globalSettings, override) {
   return normalizeAnalysisSettings({
     ...globalSettings,
     ...override,
+    analysisEnabled: globalSettings.analysisEnabled !== false,
     auto: { ...globalSettings.auto, ...(override.auto ?? {}) },
     model: { ...globalSettings.model, ...(override.model ?? {}) },
     resourcePolicy: { ...globalSettings.resourcePolicy, ...(override.resourcePolicy ?? {}) },
@@ -679,7 +680,7 @@ function automaticRetrySummary(history, closedThroughSeq) {
 function provisionalEstimate(openLive, provisional, settings) {
   if (!openLive) return null
   const policy = settings?.auto?.provisional
-  if (!policy || !settings.auto?.enabled || !settings.defaultRoute) {
+  if (!policy || settings.analysisEnabled === false || !settings.auto?.enabled || !settings.defaultRoute) {
     return { reason: settings?.defaultRoute ? 'disabled' : 'waiting-for-model', at: null }
   }
   if ((provisional?.callsInTurn ?? 0) >= policy.maxCallsPerTurn) return { reason: 'provisional-quota', at: null }
@@ -767,7 +768,7 @@ function storedAutomaticDecision(history, settings, nextTrigger) {
   const closedThroughSeq = history.lastClosedSeq ?? history.programmatic.coveredThroughSeq
   const semanticThroughSeq = history.semantic.coveredThroughSeq
   const retry = history.semantic.retry
-  if (settings?.auto?.enabled !== true) return { due: false, reason: 'disabled', closedThroughSeq }
+  if (settings?.analysisEnabled === false || settings?.auto?.enabled !== true) return { due: false, reason: 'disabled', closedThroughSeq }
   if (!settings?.defaultRoute) return { due: false, reason: 'waiting-for-model', closedThroughSeq }
   if (retry?.paused) {
     return { due: false, reason: 'retry-paused', closedThroughSeq, retryAttempt: retry.attempt ?? null, retryCode: retry.code ?? null }
@@ -1455,6 +1456,13 @@ export class TraceInsightService {
     }
   }
 
+  async assertAnalysisEnabled(signal) {
+    if ((await this.globalSettingsState()).settings.analysisEnabled === false) {
+      throw Object.assign(new Error('轨迹模型分析已关闭，请先打开侧栏顶部的“启用轨迹分析”。'), { code: 'ANALYSIS_DISABLED' })
+    }
+    if (signal?.aborted) throw signal.reason ?? Object.assign(new Error('Analysis cancelled.'), { code: 'MODEL_ABORTED' })
+  }
+
   async readEffectiveSettings(sessionId) {
     return this.effectiveSettings(sessionId)
   }
@@ -1464,7 +1472,19 @@ export class TraceInsightService {
       ? await this.store.updateSettingsState(current => normalizeAnalysisSettings(patch, current), { expectedRevision })
       : { revision: 0, settings: await this.store.updateSettings(current => normalizeAnalysisSettings(patch, current)) }
     this.catalogCache = null
-    if (state.settings.auto.enabled && state.settings.defaultRoute) {
+    if (state.settings.analysisEnabled === false) {
+      const reason = Object.assign(new Error('轨迹模型分析已关闭。'), { code: 'ANALYSIS_DISABLED' })
+      for (const controller of this.controllers) controller.abort(reason)
+      for (const controller of this.jobControllers.values()) controller.abort(reason)
+      for (const timers of [this.quietTimers, this.provisionalDeadlineTimers]) {
+        for (const timer of timers.values()) this.clearTimer(timer)
+        timers.clear()
+      }
+      this.quietDueAt.clear()
+      this.provisionalDeadlineDueAt.clear()
+      await Promise.all([...this.jobSessions].map(([jobId, sessionId]) => this.cancelAnalysis(jobId, { sessionId })))
+    }
+    if (state.settings.analysisEnabled !== false && state.settings.auto.enabled && state.settings.defaultRoute) {
       this.runInBackground(null, 'settings-change-scan', this.resumeEnrolledSessions('settings-change'))
     }
     return { global: state.settings, revision: state.revision, updatedAt: state.updatedAt ?? null }
@@ -1482,7 +1502,7 @@ export class TraceInsightService {
       return current
     })
     const result = await this.effectiveSettings(sessionId, history)
-    if (result.effective.auto.enabled && result.effective.defaultRoute) {
+    if (result.effective.analysisEnabled !== false && result.effective.auto.enabled && result.effective.defaultRoute) {
       this.runInBackground(sessionId, 'session-settings-change', this.enqueue(sessionId, () => this.resumeAutomatic(sessionId, 'settings-change')))
     }
     return result
@@ -1598,7 +1618,7 @@ export class TraceInsightService {
         await this.markLiveFinalizing(session.id, event)
         const history = await this.store.getSession(session.id)
         const settings = (await this.effectiveSettings(session.id, history)).effective
-        if (!settings.auto.enabled || !settings.defaultRoute) return
+        if (settings.analysisEnabled === false || !settings.auto.enabled || !settings.defaultRoute) return
         const retryAt = Date.parse(history.semantic.retry?.notBefore)
         const retryConfigurationMatches = !history.semantic.retry?.configurationKey
           || history.semantic.retry.configurationKey === retryConfigurationKey(settings.defaultRoute, settings)
@@ -1824,7 +1844,7 @@ export class TraceInsightService {
     await this.store.updateLiveSession(sessionId, current => {
       const provisional = current.live.provisional
       provisional.turn = state.turn
-      if (!result.cached) {
+      if (!result.cached && result.run.modelDispatchedAt) {
         provisional.callsInTurn += 1
         provisional.lastDispatchedAt = iso(this.now)
       }
@@ -2040,8 +2060,11 @@ export class TraceInsightService {
     })
 
     const linked = this.linkedSignal(signal)
+    let dispatched = false
     try {
+      await this.assertAnalysisEnabled(linked.signal)
       const result = await this.withModelSlot(linked.signal, async () => {
+        await this.assertAnalysisEnabled(linked.signal)
         run.modelDispatchedAt = iso(this.now)
         await this.store.updateSession(sessionId, current => {
           const index = current.semantic.runs.findIndex(item => item.id === run.id)
@@ -2049,6 +2072,8 @@ export class TraceInsightService {
           current.semantic.runs[index] = { ...current.semantic.runs[index], modelDispatchedAt: run.modelDispatchedAt }
           return current
         })
+        await this.assertAnalysisEnabled(linked.signal)
+        dispatched = true
         return this.modelRunner(this.llm, {
           route,
           envelope,
@@ -2082,10 +2107,12 @@ export class TraceInsightService {
       return { run: completed, cached: false }
     } catch (error) {
       const normalizedError = runError(error)
-      const manualCancellation = mode === 'manual' && (normalizedError.code === 'MODEL_ABORTED' || signal?.aborted)
+      if (!dispatched) delete run.modelDispatchedAt
+      const cancelled = normalizedError.code === 'ANALYSIS_DISABLED' || linked.signal.reason?.code === 'ANALYSIS_DISABLED'
+        || (mode === 'manual' && (normalizedError.code === 'MODEL_ABORTED' || signal?.aborted))
       let failed = {
         ...run,
-        status: manualCancellation ? 'cancelled' : 'failed',
+        status: cancelled ? 'cancelled' : 'failed',
         completedAt: iso(this.now),
         error: normalizedError,
         rawText: normalizedError.rawText ?? '',
@@ -2094,7 +2121,7 @@ export class TraceInsightService {
       }
       await this.store.updateSession(sessionId, current => {
         const index = current.semantic.runs.findIndex(item => item.id === run.id)
-        if (mode === 'auto' && coverageRole === 'primary') {
+        if (!cancelled && mode === 'auto' && coverageRole === 'primary') {
           const previous = current.semantic.retry
           const configurationKey = retryConfigurationKey(route, settingsAtStart)
           const attempt = previous?.fromSeq === run.fromSeq
@@ -2260,7 +2287,7 @@ export class TraceInsightService {
       }
       if (result.run.status !== 'succeeded') {
         const retryAt = Date.parse(result.run.retryAt)
-        if (!result.run.retryPaused) {
+        if (result.run.status !== 'cancelled' && !result.run.retryPaused) {
           this.scheduleQuiet(sessionId, Number.isFinite(retryAt)
             ? Math.max(0, retryAt - this.now())
             : RETRY_BASE_MS)
@@ -2290,6 +2317,7 @@ export class TraceInsightService {
   }
 
   async previewAnalysis({ sessionId, mode = 'supplemental', fromSeq, toSeq, route, force = false }, signal) {
+    await this.assertAnalysisEnabled(signal)
     if (!['primary', 'supplemental'].includes(mode)) {
       throw Object.assign(new Error('Manual analysis mode must be primary or supplemental.'), { code: 'INVALID_JOB_MODE' })
     }
@@ -2396,6 +2424,7 @@ export class TraceInsightService {
   }
 
   async startAnalysis(request, signal) {
+    await this.assertAnalysisEnabled(signal)
     const sessionId = request.sessionId
     const started = await this.enqueue(sessionId, async () => {
       if (request.idempotencyKey) {
@@ -2571,7 +2600,7 @@ export class TraceInsightService {
           jobId,
           jobSegmentIndex: index,
         })
-        const cancelled = controller.signal.aborted || result.run.error?.code === 'MODEL_ABORTED'
+        const cancelled = controller.signal.aborted || result.run.status === 'cancelled' || result.run.error?.code === 'MODEL_ABORTED'
         job = await this.updateJob(sessionId, jobId, current => {
           const currentSegment = current.segments[index]
           currentSegment.runId = result.run.id

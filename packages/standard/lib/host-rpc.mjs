@@ -77,6 +77,7 @@ function safeOperationalFailure(error) {
     'MODEL_MAX_TOKENS',
     'MODEL_TIMEOUT',
     'MODEL_ABORTED',
+    'ANALYSIS_DISABLED',
     'RATE_LIMIT',
     'RATE_LIMITED',
     'AUTH',

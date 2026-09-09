@@ -1812,3 +1812,77 @@ test('manual batches preserve explicit override audit requirements and idempoten
   await service.enqueue('session-budget', async () => {})
   assert.ok(modelCalls <= preview.resources.modelCalls)
 })
+
+
+test('global analysis switch blocks every session and manual entry without losing settings or history', async () => {
+  let calls = 0
+  const { service, store } = serviceFor({ events: completedTurn(1, 0),
+    settings: { analysisEnabled: false, defaultRoute: { provider: 'p', model: 'm' }, auto: { everyTurns: 1 } },
+    modelRunner: async () => { calls += 1; return semanticResult() },
+  })
+  await enroll(store, 'switch-off', 5)
+  await service.updateSessionSettings('switch-off', { analysisEnabled: true, auto: { enabled: true } })
+  const scoped = await service.readEffectiveSettings('switch-off')
+  assert.equal(scoped.effective.analysisEnabled, false)
+  assert.equal((await service.maybeRunPrimary('switch-off', 'quiet-period')).decision.reason, 'disabled')
+  assert.equal((await service.readInsight('switch-off')).autoDecision.reason, 'disabled')
+  const request = { sessionId: 'switch-off', fromSeq: 0, toSeq: 5 }
+  await assert.rejects(service.previewAnalysis(request), { code: 'ANALYSIS_DISABLED' })
+  await assert.rejects(service.startAnalysis(request), { code: 'ANALYSIS_DISABLED' })
+  await assert.rejects(service.runManual(request), { code: 'ANALYSIS_DISABLED' })
+  assert.equal(calls, 0)
+  assert.ok((await store.getSession('switch-off')).programmatic.checkpoints.length > 0)
+  await service.updateGlobalSettings({ analysisEnabled: true })
+  await service.enqueue('switch-off', async () => {})
+  await waitFor(() => calls === 1)
+  assert.equal((await store.getSettings()).defaultRoute.model, 'm')
+  service.dispose()
+})
+
+test('switching off cancels active and slot-queued automatic runs without calls or retry errors', async () => {
+  let calls = 0
+  const { service, store } = serviceFor({ events: completedTurn(1, 0),
+    settings: { defaultRoute: { provider: 'p', model: 'm' }, auto: { everyTurns: 1 } },
+    modelRunner: async (_llm, request) => { calls += 1; return new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true })
+    }) },
+  })
+  await enroll(store, 'switch-a', 5)
+  await enroll(store, 'switch-b', 5)
+  const first = service.maybeRunPrimary('switch-a', 'quiet-period')
+  const second = service.maybeRunPrimary('switch-b', 'quiet-period')
+  await waitFor(() => calls === 1 && service.modelWaiters.length === 1)
+  await service.updateGlobalSettings({ analysisEnabled: false })
+  const results = await Promise.all([first, second])
+  assert.deepEqual(results.map(result => result.run.status), ['cancelled', 'cancelled'])
+  assert.equal(calls, 1)
+  assert.equal(service.modelWaiters.length, 0)
+  assert.equal(service.quietTimers.size, 0)
+  for (const sessionId of ['switch-a', 'switch-b']) {
+    const h = await store.getSession(sessionId)
+    assert.equal(h.semantic.retry, null)
+    assert.equal(h.semantic.coveredThroughSeq, -1)
+  }
+  service.dispose()
+})
+
+test('switching off a manual job cancels its remaining segments and rejects stale previews', async () => {
+  let calls = 0
+  const { service, store } = serviceFor({ events: [...completedTurn(1, 0), ...completedTurn(2, 6)],
+    settings: { defaultRoute: { provider: 'p', model: 'm' } },
+    modelRunner: async (_llm, request) => { calls += 1; return new Promise((resolve, reject) => {
+      request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true })
+    }) },
+  })
+  const request = { sessionId: 'switch-job', mode: 'primary', fromSeq: 0, toSeq: 11 }
+  const preview = await service.previewAnalysis(request)
+  const started = await service.startAnalysis({ ...request, previewToken: preview.previewToken })
+  await waitFor(() => calls === 1)
+  await service.updateGlobalSettings({ analysisEnabled: false })
+  await service.enqueue('switch-job', async () => {})
+  assert.equal((await service.readAnalysisJob(started.jobId)).job.status, 'cancelled')
+  assert.equal((await store.getSession('switch-job')).semantic.retry, null)
+  await assert.rejects(service.startAnalysis({ ...request, previewToken: preview.previewToken }), { code: 'ANALYSIS_DISABLED' })
+  assert.equal(calls, 1)
+  service.dispose()
+})

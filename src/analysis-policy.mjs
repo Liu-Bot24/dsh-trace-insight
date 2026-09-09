@@ -4,6 +4,7 @@ export const ANALYSIS_SETTINGS_VERSION = 1
 
 export const DEFAULT_ANALYSIS_SETTINGS = Object.freeze({
   schemaVersion: ANALYSIS_SETTINGS_VERSION,
+  analysisEnabled: true,
   defaultRoute: null,
   auto: Object.freeze({
     enabled: true,
@@ -110,6 +111,7 @@ export function normalizeAnalysisSettings(value = {}, base = DEFAULT_ANALYSIS_SE
   const maxInputCharsPerJob = finiteInteger(resourcePolicy.maxInputCharsPerJob, baseResourcePolicy.maxInputCharsPerJob, 4_000, 100_000_000)
   return {
     schemaVersion: ANALYSIS_SETTINGS_VERSION,
+    analysisEnabled: typeof source.analysisEnabled === 'boolean' ? source.analysisEnabled : base.analysisEnabled !== false,
     defaultRoute: Object.prototype.hasOwnProperty.call(source, 'defaultRoute')
       ? route(source.defaultRoute)
       : route(base.defaultRoute),
@@ -382,7 +384,7 @@ export function evaluateAutomaticTrigger({ events, history, report, settings, re
     pendingTurnCount: pendingTurns.length,
     compressedChars,
   }
-  if (!normalized.auto.enabled) return { ...base, due: false, reason: 'disabled' }
+  if (!normalized.analysisEnabled || !normalized.auto.enabled) return { ...base, due: false, reason: 'disabled' }
   if (closedThroughSeq <= coveredThroughSeq) return { ...base, due: false, reason: 'covered' }
   if (!normalized.defaultRoute) return { ...base, due: false, reason: 'waiting-for-model' }
   if (reason === 'quiet-period') return { ...base, due: true, reason: 'quiet-period' }

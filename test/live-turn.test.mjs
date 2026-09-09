@@ -163,6 +163,9 @@ test('trigger: same-kind failure x3 fires once with reason provisional-failure-p
   const decision = evaluateProvisionalTrigger({ state, provisional, settings, now: 100_000 })
   assert.equal(decision.due, true)
   assert.equal(decision.reason, 'provisional-failure-pattern')
+  const disabled = normalizeAnalysisSettings({ analysisEnabled: false }, settings)
+  assert.equal(evaluateProvisionalTrigger({ state, provisional, settings: disabled, now: 100_000 }).reason, 'disabled')
+  assert.equal(provisionalDeadlineAt({ state, provisional, settings: disabled, now: 100_000 }), null)
 })
 
 test('trigger: cooldown and maxCallsPerTurn are hard gates', () => {

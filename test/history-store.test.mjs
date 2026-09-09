@@ -67,6 +67,7 @@ test('file store persists settings and one isolated file per session', async t =
   const store = new FileHistoryStore({ rootDir })
   await store.updateSettings(settings => ({
     ...settings,
+    analysisEnabled: false,
     defaultRoute: { provider: 'provider-low', model: 'model-small' },
   }))
   await store.updateSession('session-a', history => {
@@ -74,6 +75,7 @@ test('file store persists settings and one isolated file per session', async t =
     return history
   })
   const reopened = new FileHistoryStore({ rootDir })
+  assert.equal((await reopened.getSettings()).analysisEnabled, false)
   assert.deepEqual((await reopened.getSettings()).defaultRoute, { provider: 'provider-low', model: 'model-small' })
   assert.equal((await reopened.getSession('session-a')).lastObservedSeq, 8)
   assert.equal((await reopened.listSessions()).length, 1)

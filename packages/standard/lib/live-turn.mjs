@@ -236,7 +236,7 @@ export function evaluateProvisionalTrigger({ state, provisional = EMPTY_PROVISIO
     noProgressSteps: state?.noProgressSteps ?? 0,
     callsInTurn,
   }
-  if (!normalized.auto.enabled) return { ...base, due: false, reason: 'disabled' }
+  if (!normalized.analysisEnabled || !normalized.auto.enabled) return { ...base, due: false, reason: 'disabled' }
   if (!policy.enabled) return { ...base, due: false, reason: 'provisional-disabled' }
   if (!normalized.defaultRoute) return { ...base, due: false, reason: 'waiting-for-model' }
   if (state?.turn === null || state === null) return { ...base, due: false, reason: 'no-open-turn' }

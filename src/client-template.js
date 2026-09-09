@@ -566,6 +566,7 @@ function triggerLabel(value) {
     'turn-end': 'Turn 结束',
     'manual-backfill-required': '历史区间需手动回填',
     'retry-paused': '自动重试已暂停',
+    disabled: '模型分析已暂停',
     covered: '正式分析已完成',
     manual: '人工检查点',
   }
@@ -1303,6 +1304,17 @@ function needsProgrammaticSync(value, currentSeq = -1) {
   return programmaticThrough < 0 && !latestProgrammatic && turnCount === 0
 }
 
+function evidenceEventBody(event) {
+  const text = value => value === null || value === undefined ? ''
+    : typeof value === 'string' ? value : JSON.stringify(value)
+  const primary = text(event.text || event.summary || event.content)
+  const fields = event.type === 'tool/call' ? [['工具', event.tool], ['参数', event.arguments]]
+    : event.type === 'tool/result' ? [['结果', event.result], ['错误', event.error]]
+    : [['原因', event.reason], ['上下文', event.context], ['数据', event.data]]
+  return [primary, ...fields.filter(([, value]) => value !== null && value !== undefined && value !== '')
+    .map(([label, value]) => `${label}：${text(value)}`)].filter(Boolean).join('\n').slice(0, 6000)
+}
+
 function settingsView(data) {
   const effectiveCandidate = data?.effectiveSettings
   const scoped = data?.settingsScope
@@ -1544,7 +1556,7 @@ function EvidenceDrawer({ selection, onClose, onContext, canReadContext, returnF
             contextOpen && activeContext?.events?.length ? h('section', { className: 'tiEvidenceContext' },
               h('div', { className: 'tiEvidenceContextMeta' }, `原始事件前后文 · ${activeContext.verified === false ? '引用未验证' : currentEventIndex >= 0 ? '引用位置已定位' : '引用未找到'}`),
               h('div', { className: 'tiEvidenceContextEvents' }, ...activeContext.events.map((event, eventIndex) => {
-                const detail = event.text || event.summary || (typeof event.content === 'string' ? event.content : event.content ? JSON.stringify(event.content) : '')
+                const detail = evidenceEventBody(event)
                 const current = eventIndex === currentEventIndex
                 return h('article', {
                   className: `tiEvidenceContextEvent${current ? ' tiEvidenceContextEvent--current' : ''}`,
@@ -1976,6 +1988,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
   const supportsResearchMembers = capability(capabilities, 'researchMembers')
   const supportsEvidenceRead = capability(capabilities, 'evidenceRead')
   const settings = settingsView(data)
+  const analysisEnabled = settings.global?.analysisEnabled !== false
   timelineViewIdentity.current = {
     source: historyPage.source,
     cursor: historyPage.nextCursor,
@@ -2713,6 +2726,22 @@ function TraceInsightView({ useSession, api, sessionId }) {
     if (turn) setManualToSeq(String(turn.toSeq))
   }, [turns])
 
+  const toggleAnalysis = useCallback(async () => {
+    const id = beginOperation('analysis-toggle')
+    setError('')
+    try {
+      await api.updateGlobalSettings({
+        patch: { analysisEnabled: settings.global?.analysisEnabled === false },
+        expectedRevision: settings.revision?.global ?? settings.revision,
+      })
+      await refreshAfterCurrent()
+      finishOperation('analysis-toggle', id, 'succeeded')
+    } catch (reason) {
+      setError(`分析开关保存失败：${reason instanceof Error ? reason.message : String(reason)}`)
+      finishOperation('analysis-toggle', id, 'failed')
+    }
+  }, [api, beginOperation, finishOperation, refreshAfterCurrent, settings])
+
   const saveSettings = useCallback(async () => {
     const id = beginOperation('settings')
     setError('')
@@ -2805,13 +2834,13 @@ function TraceInsightView({ useSession, api, sessionId }) {
   }, [api, beginOperation, currentManualSignature, finishOperation, hasPrimaryGap, manualAttempt, manualMode, manualRequest, rangeValid, segmentAnalysisItemId, supportsJobs, supportsPreview])
 
   useEffect(() => {
-    if (!segmentAnalysisItemId || manualMode !== 'supplemental' || !rangeValid || !manualModelKey) return
+    if (!analysisEnabled || !segmentAnalysisItemId || manualMode !== 'supplemental' || !rangeValid || !manualModelKey) return
     if (manualPreviewSignature === currentManualSignature) return
     if (job && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(job.status)) return
     if (segmentPreviewRequested.current === currentManualSignature) return
     segmentPreviewRequested.current = currentManualSignature
     previewManual()
-  }, [currentManualSignature, job, manualMode, manualModelKey, manualPreviewSignature, previewManual, rangeValid, segmentAnalysisItemId])
+  }, [analysisEnabled, currentManualSignature, job, manualMode, manualModelKey, manualPreviewSignature, previewManual, rangeValid, segmentAnalysisItemId])
 
   const retrySegmentPreview = useCallback(() => {
     segmentPreviewRequested.current = ''
@@ -3219,6 +3248,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
     || (latestTimelineRevision !== null && numericRevision(researchSummary?.revision) !== null && latestTimelineRevision > numericRevision(researchSummary.revision)))
   const segmentAnalysisPanelFor = (item, itemKey) => {
     if (segmentAnalysisItemId !== itemKey) return null
+    if (!analysisEnabled) return h('div', { className: 'tiNotice' }, '请先打开侧栏顶部的“启用轨迹分析”。')
     const relatedJob = relatedJobsByRange.get(`${item.fromSeq}:${item.toSeq}`) || null
     const currentJobMatches = job && job.fromSeq === item.fromSeq && job.toSeq === item.toSeq
     const persistedJobRunning = relatedJob && !['succeeded', 'failed', 'cancelled', 'interrupted'].includes(relatedJob.status)
@@ -3266,10 +3296,14 @@ function TraceInsightView({ useSession, api, sessionId }) {
           h('p', { className: 'tiSummary' }, report.summary || '规则分析正在整理轨迹。'),
         ),
         h('div', { className: 'tiHeaderActions' },
+          h('button', { className: 'tiButton', type: 'button', disabled: operationRunning('analysis-toggle'), onClick: toggleAnalysis,
+            title: '当前设备所有会话的模型分析总开关，点击即保存' },
+          operationRunning('analysis-toggle') ? '保存中…' : analysisEnabled ? '关闭轨迹分析' : '启用轨迹分析'),
           h('button', { className: 'tiButton', type: 'button', disabled: state === 'loading', onClick: () => { pendingLatestLanding.current = true; return supportsBootstrap ? refreshBootstrap({ filters: appliedHistoryFilters }) : refresh() } }, state === 'loading' ? '刷新中…' : '刷新时间线'),
         ),
       ),
       h(StatusOverview, { data, effective, job, stale: stale || statusStale, lastSuccessAt }),
+      !analysisEnabled ? h('div', { className: 'tiNotice', role: 'status' }, '轨迹模型分析已关闭 · 当前设备所有会话均不再发起自动或手动模型调用。历史与免费规则结果仍可查看。已发送的请求可能仍计费。') : null,
       !capabilityLimited ? null : h('div', { className: 'tiNotice tiNotice--warning' }, '当前 DSH 版本仅支持部分功能：仍可查看时间线、保存全局设置和运行补充分析；当前不支持的会话设置、补齐未分析区间、后台任务、取消或原始轨迹导出会被禁用。'),
       !investigationLimited ? null : h('div', { className: 'tiNotice tiNotice--warning' }, '当前 DSH 版本仅支持部分复盘功能；不可用的分页、运行对比或概览入口会被禁用。'),
       decision.reason === 'waiting-for-model' ? h('div', { className: 'tiNotice tiNotice--warning' }, '规则分析正在持续工作；尚未设置默认分析模型。保存分析模型后，自动策略会从未分析区间起点继续。') : null,
@@ -3281,7 +3315,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
         h('button', { className: 'tiButton', type: 'button', disabled: !supportsPreview || !supportsJobs || !supportsStatus, 'aria-expanded': automaticRetryOpen,
           onClick: () => { setAutomaticRetryOpen(true); ensureOperationsData() } }, '手动重试'),
       ) : null,
-      automaticRetryOpen ? h(AutomaticRetryPanel, { key: sessionId, api, sessionId, models, initialRoute: retry?.route || settings.effective?.defaultRoute,
+      analysisEnabled && automaticRetryOpen ? h(AutomaticRetryPanel, { key: sessionId, api, sessionId, models, initialRoute: retry?.route || settings.effective?.defaultRoute,
         onCompleted: refreshAfterCurrent, onClose: () => setAutomaticRetryOpen(false) }) : null,
       latestDiagnostic ? h('div', { className: 'tiNotice tiNotice--error' }, diagnosticNoticeText(latestDiagnostic)) : null,
       error ? h('div', { className: 'tiNotice tiNotice--error' }, `${error}${stale && data ? '；已保留上次成功数据。' : ''}`) : null,
@@ -3438,6 +3472,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
             ),
           ),
           h('div', { className: 'tiControlStack' },
+            h('div', { className: 'tiNotice' }, '模型分析总开关位于侧栏顶部，作用于当前设备所有会话，点击即保存；重新启用后会按原策略继续。关闭不会改变已选模型或自动策略。'),
             h('details', { className: 'tiDisclosure', open: opsOpen.resources === true },
               h('summary', { onClick: toggleOpsCard('resources') }, h('div', null,
                 h('div', { className: 'tiDisclosureTitle' }, '资源与用量'),
@@ -3560,7 +3595,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
                   h('input', { type: 'checkbox', checked: forceRun, onChange: event => setForceRun(event.target.checked) }),
                   h('span', null, '即使输入、模型和分析器版本相同，也强制重新调用'),
                 ),
-                h('button', { className: 'tiButton', type: 'button', disabled: operationRunning('manual-preview') || !rangeValid || !manualModelKey || (job && !jobTerminal), onClick: previewManual }, operationRunning('manual-preview') ? '预览中…' : '预览切段与调用'),
+                h('button', { className: 'tiButton', type: 'button', disabled: !analysisEnabled || operationRunning('manual-preview') || !rangeValid || !manualModelKey || (job && !jobTerminal), onClick: previewManual }, operationRunning('manual-preview') ? '预览中…' : '预览切段与调用'),
                 manualPreview ? h('div', { className: 'tiPreview' },
                   h('div', { className: 'tiPreviewTitle' }, manualMode === 'primary' ? '补齐未分析区间预览' : '补充分析预览'),
                   h('div', { className: 'tiPreviewGrid' },
@@ -3579,7 +3614,7 @@ function TraceInsightView({ useSession, api, sessionId }) {
                     h('label', { className: 'tiCheck' }, h('input', { type: 'checkbox', checked: overrideBudget, onChange: event => setOverrideBudget(event.target.checked) }), h('span', null, '允许本次分析超过资源上限（原因会记录在分析历史中）')),
                     h('label', { className: 'tiField' }, h('span', { className: 'tiLabel' }, '超限原因（必填）'), h('textarea', { className: 'tiInput', rows: 2, value: overrideReason, onChange: event => setOverrideReason(event.target.value) })),
                   ) : null,
-                  h('button', { className: 'tiButton tiButton--semantic', type: 'button', disabled: operationRunning('manual-start') || manualPreviewSignature !== currentManualSignature || Boolean(job) || (budgetAssessment.hardLimitExceeded && (!overrideBudget || !overrideReason.trim())), onClick: startManual }, operationRunning('manual-start') ? '正在启动…' : supportsJobs ? '启动后台分析' : '执行补充分析'),
+                  h('button', { className: 'tiButton tiButton--semantic', type: 'button', disabled: !analysisEnabled || operationRunning('manual-start') || manualPreviewSignature !== currentManualSignature || Boolean(job) || (budgetAssessment.hardLimitExceeded && (!overrideBudget || !overrideReason.trim())), onClick: startManual }, operationRunning('manual-start') ? '正在启动…' : supportsJobs ? '启动后台分析' : '执行补充分析'),
                 ) : null,
                 job ? h('div', { className: `tiJob${job.status === 'failed' || job.status === 'interrupted' ? ' tiJob--failed' : jobTerminal ? ' tiJob--done' : ''}` },
                   job.batchProgress ? h('div', { className: 'tiJobDetail' }, batchProgressText(job)) : null,

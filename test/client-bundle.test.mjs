@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
+import { compressTraceEvent } from '../src/analysis-policy.mjs'
 
 const standardEdition = process.env.TRACE_INSIGHT_TEST_VARIANT === 'standard'
 const clientUrl = new URL(standardEdition ? '../packages/standard/client.js' : '../client.js', import.meta.url)
@@ -724,8 +725,9 @@ test('raw event context stays subordinate to the evidence item that explicitly o
       return request.evidenceIndex === 1
         ? { verified: true, events: [
           { seq: 23, type: 'assistant/message', text: 'BEFORE_CONTEXT' },
-          { seq: 24, type: 'tool/call', text: 'RAW_CONTEXT' },
-          { seq: 25, type: 'tool/result', text: 'AFTER_CONTEXT' },
+          compressTraceEvent({ seq: 24, type: 'tool/call', data: { name: 'pwsh', arguments: { command: 'RAW_CONTEXT' } } }),
+          compressTraceEvent({ seq: 25, type: 'tool/result', data: { error: 'TOOL_ERROR', message: { content: [{ type: 'tool-result', content: [{ type: 'text', text: 'AFTER_CONTEXT' }] }] } } }),
+          compressTraceEvent({ seq: 26, type: 'step/start', data: {} }),
         ] }
         : { verified: true, events: [{ seq: 14, text: 'RAW_CONTEXT' }] }
     },
@@ -754,12 +756,17 @@ test('raw event context stays subordinate to the evidence item that explicitly o
   assert.match(treeText(drawer), /原始事件前后文 · 引用位置已定位/)
   assert.match(treeText(drawer), /RAW_CONTEXT/)
   const contextEvents = findTreeNodes(drawer, node => String(node.props?.className || '').split(/\s+/).includes('tiEvidenceContextEvent'))
-  assert.equal(contextEvents.length, 3)
-  assert.deepEqual(contextEvents.map(node => treeText(node).match(/Seq (\d+)/)?.[1]), ['23', '24', '25'])
+  assert.equal(contextEvents.length, 4)
+  assert.deepEqual(contextEvents.map(node => treeText(node).match(/Seq (\d+)/)?.[1]), ['23', '24', '25', '26'])
   assert.doesNotMatch(contextEvents[0].props.className, /--current/)
   assert.match(contextEvents[1].props.className, /--current/)
   assert.match(treeText(contextEvents[1]), /当前引用/)
   assert.doesNotMatch(contextEvents[2].props.className, /--current/)
+  assert.match(treeText(contextEvents[0]), /BEFORE_CONTEXT/)
+  assert.match(treeText(contextEvents[1]), /工具：pwsh/)
+  assert.match(treeText(contextEvents[2]), /结果：text: AFTER_CONTEXT/)
+  assert.match(treeText(contextEvents[2]), /错误：TOOL_ERROR/)
+  assert.match(treeText(contextEvents[3]), /（空事件正文）/)
 })
 
 test('switching evidence items reuses previously loaded raw context without another request', async () => {
@@ -1928,4 +1935,55 @@ test('timeline sorter preserves unknown stability, valid fallbacks, layer order,
   assert.deepEqual(Array.from(context.__sort(merged, 'asc', 'asc'), item => item.id), ['seq-10', 'seq-20', 'seq-30'])
   assert.deepEqual(Array.from(context.__sort(merged, 'desc', 'desc'), item => item.id), ['seq-30', 'seq-20', 'seq-10'])
   assert.deepEqual(merged.map(item => item.id), originalOrder, 'sorting never mutates merged history input')
+})
+
+
+test('global analysis action button labels the next action, saves immediately, and preserves failed-save state', async () => {
+  const harness = interactiveReactHarness()
+  const plugin = await loadBundle(harness.react)
+  let registration
+  plugin.apply({
+    effect(callback) { return callback() }, connection: { rpc: { async call() { return { ok: true, value: {} } } } }, sessions: { binding() { return { session: {} } } },
+    slots: { inject(_name, callback) { callback() }, register(options, component) { registration = { options, component }; return () => {} } },
+  })
+  let enabled = true
+  let rejectSave = false
+  const saves = []
+  const api = {
+    async readCapabilities() { return { endpoints: ['insight/bootstrap', 'settings/effective', 'settings/update-global', 'settings/update-session'] } },
+    async readBootstrap() {
+      const data = boundedBootstrap([])
+      data.settingsScope = { global: { analysisEnabled: enabled, defaultRoute: { provider: 'p', model: 'm' } }, effective: { analysisEnabled: enabled }, revision: { global: saves.length, session: 0 } }
+      return data
+    },
+    async updateGlobalSettings(request) {
+      if (rejectSave) throw new Error('TEST_SAVE_FAILURE')
+      saves.push(request)
+      enabled = request.patch.analysisEnabled
+    },
+  }
+  const props = { useSession: () => ({ nodes: [{ seq: 30 }] }), api, sessionId: 'switch-ui' }
+  harness.render(registration.component, props)
+  await new Promise(resolve => setImmediate(resolve))
+  const render = () => harness.render(registration.component, props)
+  const control = tree => findTreeNodes(tree, node => node.type === 'button' && ['启用轨迹分析', '关闭轨迹分析'].includes(treeText(node)))[0]
+  const assertAction = label => {
+    const button = control(render())
+    assert.equal(treeText(button), label)
+    assert.equal(button.props.role, undefined)
+    assert.equal(button.props['aria-checked'], undefined)
+    assert.equal(button.props['aria-pressed'], undefined)
+    assert.equal(button.props['aria-label'], undefined)
+  }
+  assertAction('关闭轨迹分析')
+  await control(render()).props.onClick()
+  assertAction('启用轨迹分析')
+  assert.deepEqual(JSON.parse(JSON.stringify(saves[0].patch)), { analysisEnabled: false })
+  assert.match(treeText(render()), /所有会话均不再发起自动或手动模型调用/)
+  await control(render()).props.onClick()
+  assertAction('关闭轨迹分析')
+  rejectSave = true
+  await control(render()).props.onClick()
+  assertAction('关闭轨迹分析')
+  assert.match(treeText(render()), /分析开关保存失败：TEST_SAVE_FAILURE/)
 })
