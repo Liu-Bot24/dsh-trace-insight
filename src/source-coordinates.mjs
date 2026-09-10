@@ -1,0 +1,16 @@
+/** Coordinate safety for persisted analysis when DSH rewrites its event log format. */
+function fail(message) {
+  throw Object.assign(new Error(message), { code: 'SOURCE_FORMAT_CHANGED' })
+}
+
+export function hasAnalysisCoordinates(history) {
+  return Boolean(history.semantic?.runs?.length || history.programmatic?.checkpoints?.length
+    || history.jobs?.length || history.live?.items?.length || history.annotations?.items?.length)
+}
+
+export function assertSourceFormat(history, version) {
+  if (!Number.isSafeInteger(version)) return
+  const expected = history.sourceFormatVersion ?? (hasAnalysisCoordinates(history) ? 0 : version)
+  if (expected !== version) fail('轨迹格式已升级，历史引用需要迁移后才能继续分析。')
+}
+

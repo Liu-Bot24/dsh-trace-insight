@@ -1886,3 +1886,27 @@ test('switching off a manual job cancels its remaining segments and rejects stal
   assert.equal(calls, 1)
   service.dispose()
 })
+
+
+test('format changes reject stale evidence and new-format histories retain their source version', async () => {
+  const events = completedTurn(1, 0)
+  let version = 3
+  const query = fixture(events)
+  query.readSession = async id => ({ session: { id, version, createdAt: 900 }, events })
+  const store = new MemoryHistoryStore()
+  await store.updateSession('old-format', history => {
+    history.semantic.runs.push({ id: 'old-run', fromSeq: 0, toSeq: 5, status: 'succeeded', output: { evidenceRefs: [{ seq: 3 }] } })
+    return history
+  })
+  const service = new TraceInsightService({ sessionQuery: query, store })
+  try {
+    await assert.rejects(() => service.readEvidence({ sessionId: 'old-format', runId: 'old-run' }), error => error.code === 'SOURCE_FORMAT_CHANGED')
+    const fresh = await service.readEvidence({ sessionId: 'new-format', seq: 3 })
+    assert.equal(fresh.verified, true)
+    assert.equal((await store.getSession('new-format')).sourceFormatVersion, 3)
+    assert.equal((await service.readEvidence({ sessionId: 'new-format', seq: 3 })).verified, true)
+    version = 0
+    assert.equal((await service.readEvidence({ sessionId: 'old-format', runId: 'old-run' })).verified, true)
+    await assert.rejects(() => service.readEvidence({ sessionId: 'new-format', seq: 3 }), error => error.code === 'SOURCE_FORMAT_CHANGED')
+  } finally { service.dispose() }
+})

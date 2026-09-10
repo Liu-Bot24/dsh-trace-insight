@@ -17,16 +17,18 @@
 
 侧栏顶部的 **启用轨迹分析** 是当前设备所有会话的模型分析总开关，点击即保存，重启后仍有效。关闭后不再发起自动、阶段或手动模型调用，并取消排队中的分析、尝试中止正在运行的请求；已经发送给服务商的请求仍可能计费。历史和免费规则结果可继续查看，模型选择与自动策略保留。重新启用后按原策略继续分析。
 
+DSH 0.1.5 会转换旧会话的事件编号。已有分析记录与当前轨迹格式不同时，插件会阻止分析和证据定位，避免关联到错误事件；当前版本不会自动迁移旧分析引用。已有历史分析的用户应先保留原始记录，并在会话与分析引用均通过迁移验证后再升级 DSH。
+
 ## 安装
 
-需要 Node.js 22.19.0 或更高版本，以及 DSH Web 0.1.0-rc.7、0.1.0-rc.8、0.1.1-rc.1 、0.1.1-rc.2 或 0.1.2-rc.1。
+需要 Node.js 22.19.0 或更高版本，以及 DSH Web 0.1.0-rc.7、0.1.0-rc.8、0.1.1-rc.1、0.1.1-rc.2、0.1.2-rc.1、0.1.5-rc.1 或 0.1.5-rc.2。
 
 命令行管理 DSH 插件需要 `pnpm`；未安装时先运行 `npm install -g pnpm`。
 
-安装无补丁侧栏版 1.6.0：
+安装无补丁侧栏版 1.6.1：
 
 ```shell
-dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.0/dsh-plugin-trace-insight-standard-1.6.0.tgz
+dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.1/dsh-plugin-trace-insight-standard-1.6.1.tgz
 ```
 
 也可以使用本地 `.tgz` 包的完整路径安装。此时应将包放在固定目录，例如 `<DSH_HOME>/trace-insight/packages`，安装后保留该文件；`DSH_HOME` 默认为用户目录下的 `.dsh`。

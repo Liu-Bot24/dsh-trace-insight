@@ -78,6 +78,7 @@ function safeOperationalFailure(error) {
     'MODEL_TIMEOUT',
     'MODEL_ABORTED',
     'ANALYSIS_DISABLED',
+    'SOURCE_FORMAT_CHANGED',
     'RATE_LIMIT',
     'RATE_LIMITED',
     'AUTH',

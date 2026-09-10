@@ -1,3 +1,7 @@
+- id: connection
+  inject:
+    - webRuntime
+    - webServer
 - insert:
     - id: trace-insight
       name: dsh-plugin-trace-insight
