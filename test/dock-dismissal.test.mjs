@@ -4,12 +4,34 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 const source = readFileSync(new URL('../src/client-standard-adapter.js', import.meta.url), 'utf8')
-const { bindDockDrawerDismissals } = vm.runInNewContext(`${source}\n;({bindDockDrawerDismissals})`, { module: { exports: {} } })
+const render = (type, props, ...children) => ({ type, props: props ?? {}, children })
+const context = {
+  module: { exports: {} },
+  h: render,
+  React: { useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() } },
+}
+const { bindDockDrawerDismissals, DockToggle } = vm.runInNewContext(`${source}\n;({bindDockDrawerDismissals,DockToggle})`, context)
 
 test('sidebar has no extra title row or close button and retains its original header toggle', () => {
   assert.doesNotMatch(source, /tiDockToolbar|tiDockClose|Trace Insight · 解读|关闭解读侧栏/)
   assert.match(source, /className: 'tiToggle'/)
   assert.match(source, /onClick: \(\) => dock.toggle\(\)/)
+})
+
+test('header toggle uses a trace glyph before its label instead of the host sidebar glyph', () => {
+  const dock = {
+    subscribe() { return () => {} },
+    getSnapshot() { return { open: false } },
+    toggle() {},
+  }
+  const button = DockToggle({ dock })
+  assert.equal(button.type, 'button')
+  assert.equal(button.props['aria-label'], '展开解读侧栏')
+  assert.equal(button.children[0].type, 'svg')
+  assert.equal(button.children[1], '解读')
+  assert.deepEqual(button.children[0].children.map(node => node.type), ['circle', 'path', 'path'])
+  assert.equal(button.children[0].children.some(node => node.type === 'rect'), false)
+  assert.equal(button.children[0].children.some(node => node.props?.d === 'M15 4v16'), false)
 })
 
 test('narrow drawer can close without an added button while preserving inner controls and dialogs', () => {

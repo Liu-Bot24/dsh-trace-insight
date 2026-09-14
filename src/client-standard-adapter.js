@@ -15,7 +15,7 @@ html[data-ti-dock-dragging], html[data-ti-dock-dragging] * { cursor: col-resize 
 .tiToggle { border: 1px solid var(--dsw-alias-border-l2); min-width: 82px; height: 32px; color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-family); cursor: pointer; background: transparent; border-radius: 9px; justify-content: center; align-items: center; gap: 7px; padding: 5px 10px 5px 12px; font-size: 13px; font-weight: 500; line-height: 20px; display: inline-flex; }
 .tiToggle:hover, .tiToggle[aria-pressed="true"] { background: var(--dsw-alias-interactive-bg-hover); }
 .tiToggle:focus-visible { outline: 3px solid #3a56d448; outline-offset: 2px; }
-.tiToggleIcon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; }
+.tiToggleIcon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
 `
 
 function useDockSnapshot(dock) {
@@ -29,8 +29,10 @@ function DockToggle({ dock }) {
     'aria-pressed': state.open, 'aria-controls': 'trace-insight-dock-panel',
     'aria-label': state.open ? '收起解读侧栏' : '展开解读侧栏',
     onClick: () => dock.toggle(),
-  }, '解读', h('svg', { className: 'tiToggleIcon', viewBox: '0 0 24 24', 'aria-hidden': true },
-    h('rect', { x: 3, y: 4, width: 18, height: 16, rx: 2.5 }), h('path', { d: 'M15 4v16' })))
+  }, h('svg', { className: 'tiToggleIcon', viewBox: '0 0 24 24', 'aria-hidden': true },
+    h('circle', { cx: 4.5, cy: 7, r: 1.5 }),
+    h('path', { d: 'M6 7h3l3 5h6.5' }),
+    h('path', { d: 'm16 9.5 2.5 2.5-2.5 2.5' })), '解读')
 }
 
 function bindDockDrawerDismissals(doc, close) {
