@@ -25,10 +25,10 @@ Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1
 
 DSH's command-line plugin manager also requires `pnpm`. If it is not installed, run `npm install -g pnpm` first.
 
-Install the patch-free sidebar 1.6.1:
+Install the patch-free sidebar 1.6.2:
 
 ```shell
-dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.1/dsh-plugin-trace-insight-standard-1.6.1.tgz
+dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.2/dsh-plugin-trace-insight-standard-1.6.2.tgz
 ```
 
 You can also install a local `.tgz` using its absolute path. Keep that file in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`, because DSH retains the reference. `DSH_HOME` defaults to `.dsh` in your user directory.

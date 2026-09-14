@@ -6,7 +6,7 @@ A read-only execution retrospective plugin for DeepSeek Harness (DSH). It turns 
 
 [简体中文](README.md)
 
-For the current version, use the [standard patch-free sidebar 1.6.1](packages/standard/README.en.md). The root installation and removal scripts belong to the legacy file-patched edition; its usage and restoration instructions remain below.
+For the current version, use the [standard patch-free sidebar 1.6.2](packages/standard/README.en.md). The root installation and removal scripts belong to the legacy file-patched edition; its usage and restoration instructions remain below.
 
 ![DSH Trace Insight review timeline](docs/assets/trace-insight-review.png)
 

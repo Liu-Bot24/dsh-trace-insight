@@ -6,7 +6,7 @@
 
 [English](README.en.md)
 
-当前版本请使用 [标准无补丁侧栏 1.6.1](packages/standard/README.md)。根目录的安装、卸载脚本属于旧补丁版；下文保留旧版的使用和恢复说明。
+当前版本请使用 [标准无补丁侧栏 1.6.2](packages/standard/README.md)。根目录的安装、卸载脚本属于旧补丁版；下文保留旧版的使用和恢复说明。
 
 ![DSH Trace Insight 复盘时间线](docs/assets/trace-insight-review.png)
 
