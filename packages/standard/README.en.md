@@ -21,14 +21,14 @@ DSH 0.1.5 changes event coordinates when converting older sessions. If saved ana
 
 ## Install
 
-Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, 0.1.1-rc.2, 0.1.2-rc.1, 0.1.5-rc.1, or 0.1.5-rc.2.
+Requires Node.js 22.19.0 or newer and DSH Web 0.1.0-rc.7, 0.1.0-rc.8, 0.1.1-rc.1, 0.1.1-rc.2, 0.1.2-rc.1, 0.1.5-rc.1, , 0.1.5-rc.2, or 0.1.5-rc.3.
 
 DSH's command-line plugin manager also requires `pnpm`. If it is not installed, run `npm install -g pnpm` first.
 
-Install the patch-free sidebar 1.6.3:
+Install the patch-free sidebar 1.6.4:
 
 ```shell
-dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.3/dsh-plugin-trace-insight-standard-1.6.3.tgz
+dsh plugin --profile web add https://github.com/Liu-Bot24/dsh-trace-insight/releases/download/standard-v1.6.4/dsh-plugin-trace-insight-standard-1.6.4.tgz
 ```
 
 You can also install a local `.tgz` using its absolute path. Keep that file in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`, because DSH retains the reference. `DSH_HOME` defaults to `.dsh` in your user directory.
