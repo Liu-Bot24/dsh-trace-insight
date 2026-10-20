@@ -12,11 +12,13 @@ const sessions = ['session-standard-demo-0001', 'session-standard-demo-0002']
 const expectedVersion = JSON.parse(readFileSync(new URL('../packages/standard/package.json', import.meta.url), 'utf8')).version
 const route = model => ({ provider: 'trace-insight-fixture', model })
 const checks = []
+// Optional protected cookie file for authenticated DSH 0.1.2+ test instances.
+const cookie = process.env.DSH_TEST_COOKIE_FILE ? readFileSync(process.env.DSH_TEST_COOKIE_FILE, 'utf8').trim() : ''
 async function rpc(method, payload = {}, errorCode) {
   if (payload.sessionId) assert.ok(sessions.includes(payload.sessionId))
   const rpcId = randomUUID()
   const response = await fetch(new URL(`/trace-insight/${method}`, base), {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST', headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
     body: JSON.stringify({ type: 'client-request', rpcId, method, payload }),
     signal: AbortSignal.timeout(30_000),
   })
@@ -45,7 +47,7 @@ await check('rule analysis, bounded bootstrap, and passive reads', async () => {
   for (const id of sessions) {
     const before = await rpc('export/read', { sessionId: id, kind: 'analysis' })
     const result = await rpc('programmatic/sync', { sessionId: id, historyLimit: 2 })
-    assert.equal(result.status.coverage.programmaticThroughSeq, 7)
+    assert.equal(result.status.coverage.programmaticThroughSeq, 11)
     assert.equal(result.reportSummary.metrics.failedTools, 1)
     assert.ok(result.history.items.length <= 2)
     await rpc('insight/bootstrap', { sessionId: id, historyLimit: 1 })
@@ -66,8 +68,31 @@ await check('global/session settings, isolation, and revision conflict', async (
   assert.equal((await rpc('settings/effective', { sessionId: sessions[1] })).effective.defaultRoute.model, 'fixture-small')
   await rpc('settings/update-session', { sessionId, reset: true })
 })
+await check('global analysis switch blocks manual entry and preserves passive reads', async () => {
+  const before = await rpc('export/read', { sessionId, kind: 'analysis' })
+  const requests = []
+  for (const id of sessions) {
+    const request = { sessionId: id, mode: 'supplemental', fromSeq: 0, toSeq: 11, route: route('fixture-small') }
+    const preview = await rpc('analysis/preview', request)
+    requests.push({ ...request, previewToken: preview.previewToken, idempotencyKey: randomUUID() })
+  }
+  await rpc('settings/update-global', { patch: { analysisEnabled: false } })
+  try {
+    for (const request of requests) {
+      const id = request.sessionId
+      assert.equal((await rpc('settings/effective', { sessionId: id })).effective.analysisEnabled, false)
+      await rpc('analysis/preview', { sessionId: id, mode: request.mode, fromSeq: 0, toSeq: 11, route: request.route }, 'ANALYSIS_DISABLED')
+      await rpc('analysis/start', request, 'ANALYSIS_DISABLED')
+      await rpc('insight/bootstrap', { sessionId: id })
+    }
+    const after = await rpc('export/read', { sessionId, kind: 'analysis' })
+    assert.equal(after.analysis.history.semantic.runs.length, before.analysis.history.semantic.runs.length)
+  } finally {
+    await rpc('settings/update-global', { patch: { analysisEnabled: true } })
+  }
+})
 async function analyze(model, expected, mode = 'supplemental') {
-  const request = { sessionId, mode, fromSeq: 0, toSeq: 7, route: route(model), force: true }
+  const request = { sessionId, mode, fromSeq: 0, toSeq: 11, route: route(model), force: true }
   const preview = await rpc('analysis/preview', request)
   assert.equal(preview.segments.length, 1)
   const startRequest = { ...request, previewToken: preview.previewToken, idempotencyKey: randomUUID() }
@@ -97,9 +122,9 @@ await check('provider failure stays failed', async () => {
 })
 await check('primary analysis advances the formal coverage watermark', async () => {
   const before = await rpc('export/read', { sessionId, kind: 'analysis' })
-  if (before.analysis.history.semantic.coveredThroughSeq < 7) await analyze('fixture-small', 'succeeded', 'primary')
+  if (before.analysis.history.semantic.coveredThroughSeq < 11) await analyze('fixture-small', 'succeeded', 'primary')
   const after = await rpc('export/read', { sessionId, kind: 'analysis' })
-  assert.equal(after.analysis.history.semantic.coveredThroughSeq, 7)
+  assert.equal(after.analysis.history.semantic.coveredThroughSeq, 11)
   const status = await rpc('insight/bootstrap', { sessionId, historyLimit: 2 })
   assert.equal(status.status.latest.semanticSuccess.status, 'succeeded')
 })
@@ -118,16 +143,21 @@ await check('comparison, overview, paging, and evidence', async () => {
   const evidence = await rpc('evidence/read', { sessionId, seq: 4 })
   assert.equal(evidence.verified, true)
   assert.ok(evidence.events.some(event => event.seq === 4))
+  const resultEvidence = evidence.events.find(event => event.type === 'tool/result')
+  assert.equal(resultEvidence.seq, 6)
+  assert.equal(resultEvidence.callId, `${sessionId}-call`)
+  assert.equal(resultEvidence.isError, true)
+  assert.match(resultEvidence.result, /ENOENT: missing-demo.txt/)
   const semanticEvidence = await rpc('evidence/read', { sessionId, runId: leftRunId, evidenceIndex: 0 })
   assert.equal(semanticEvidence.verified, true)
 })
 await check('raw/bundle exports require matching single-use confirmation', async () => {
   for (const kind of ['raw', 'bundle']) {
     await rpc('export/read', { sessionId, kind }, 'EXPORT_CONFIRMATION_REQUIRED')
-    const preview = await rpc('export/preview', { sessionId, kind, options: { redactRaw: true, fromSeq: 0, toSeq: 7 } })
-    const request = { sessionId, kind, options: { redactRaw: true, fromSeq: 0, toSeq: 7 }, confirmationToken: preview.confirmationToken }
+    const preview = await rpc('export/preview', { sessionId, kind, options: { redactRaw: true, fromSeq: 0, toSeq: 11 } })
+    const request = { sessionId, kind, options: { redactRaw: true, fromSeq: 0, toSeq: 11 }, confirmationToken: preview.confirmationToken }
     const exported = await rpc('export/read', request)
-    assert.equal(exported.manifest.rawRange.eventCount, 8)
+    assert.equal(exported.manifest.rawRange.eventCount, 12)
     assert.equal(exported.serviceVersion, expectedVersion)
     await rpc('export/read', request, 'EXPORT_CONFIRMATION_STALE')
   }

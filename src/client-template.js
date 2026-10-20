@@ -1309,7 +1309,7 @@ function evidenceEventBody(event) {
     : typeof value === 'string' ? value : JSON.stringify(value)
   const primary = text(event.text || event.summary || event.content)
   const fields = event.type === 'tool/call' ? [['工具', event.tool], ['参数', event.arguments]]
-    : event.type === 'tool/result' ? [['结果', event.result], ['错误', event.error]]
+    : event.type === 'tool/result' ? [['状态', typeof event.isError === 'boolean' ? (event.isError ? '失败' : '成功') : null], ['结果', event.result], ['错误', event.error]]
     : [['原因', event.reason], ['上下文', event.context], ['数据', event.data]]
   return [primary, ...fields.filter(([, value]) => value !== null && value !== undefined && value !== '')
     .map(([label, value]) => `${label}：${text(value)}`)].filter(Boolean).join('\n').slice(0, 6000)

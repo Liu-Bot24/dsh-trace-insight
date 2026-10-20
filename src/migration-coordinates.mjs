@@ -1,0 +1,97 @@
+import { hasAnalysisCoordinates } from './source-coordinates.mjs'
+import { isDeepStrictEqual } from 'node:util'
+
+// Producer identity conversions from the pinned 0.2.1-rc.2 official v3→v4
+// specification. Metadata other than kind/plugin remains part of the comparison.
+const renamedProducers = {
+  compact: 'compact-checkpoint', 'tools-code-mode': 'ptc-mode', 'tools-ptc': 'ptc-mode',
+  'dsh-compaction-basic': 'compact-basic', '@deepseek-ai/dsh-system-prompt': 'runtime-context',
+}
+const sameNameProducers = new Set([
+  'agent-instructions', 'session-reference', 'team-message', 'goal', 'skill-invocation',
+  'skill-catalog', 'coordinator', 'subagent-report', 'subagent-settled', 'webhook', 'agent-message',
+  'model-selection', 'plan-mode', 'time-context', 'tmux-context', 'user-approval',
+  'repeat-tool-reminder', 'tool-cordis', 'cordis-host-runner', 'tool-goal', 'tool-jobs',
+  'hooks-codex', 'hooks-claude-code', 'schedule', 'dsh-session-title-llm',
+])
+function comparableMessage(message) {
+  if (message?.source?.kind !== 'plugin') return message
+  const { plugin, ...source } = message.source
+  if (typeof plugin !== 'string') throw new Error('Malformed producer source requires manual history review.')
+  source.kind = plugin === '@deepseek-ai/dsh-system-prompt' && message.role === 'system'
+    ? 'system-prompt'
+    : Object.hasOwn(renamedProducers, plugin) ? renamedProducers[plugin]
+      : sameNameProducers.has(plugin) ? plugin : `plugin:${plugin}`
+  return { ...message, source }
+}
+
+// Admit only lossless tool wrapper and producer identity conversions. Opaque
+// extension rewrites and inserted events require separate review; matching
+// seq/type/time alone is never proof of equivalence.
+function comparableEvent(event) {
+  const value = structuredClone(event)
+  const data = value.data
+  if (value.type === 'user/message') value.data = comparableMessage(data)
+  else if (['developer/message', 'system/message', 'assistant/message', 'tool/result'].includes(value.type) && data?.message) {
+    data.message = comparableMessage(data.message)
+  } else if (value.type === 'agent/inbox/spliced' && Array.isArray(data?.inserted)) {
+    data.inserted = data.inserted.map(comparableMessage)
+  } else if (value.type === 'session/title-llm-request' && Array.isArray(data?.messages)) {
+    data.messages = data.messages.map(comparableMessage)
+  }
+  if (value.type !== 'tool/result' || value.data?.message?.role !== 'user') return value
+  const message = value.data.message
+  const [result] = message.content ?? []
+  if (message.content?.length !== 1 || result?.type !== 'tool-result'
+    || result.toolCallId !== message.source?.callId
+    || Object.keys(result).some(key => !['type', 'toolCallId', 'isError', 'content'].includes(key))
+    || Object.keys(message).some(key => !['role', 'id', 'source', 'content'].includes(key))) {
+    throw new Error('Tool result extensions or identities require manual history review.')
+  }
+  value.data.message = {
+    ...message, role: 'tool', toolCallId: result.toolCallId, content: result.content,
+    ...(result.isError === undefined ? {} : { isError: result.isError }),
+  }
+  return value
+}
+
+/** Admit only an officially restored v3→v4 log whose existing coordinates survive. */
+export function migrateCoordinatePreservingHistory(history, source, target) {
+  if (source.header.version !== 3 || target.header.version !== 4
+    || source.header.id !== target.header.id || history.sessionId !== source.header.id) {
+    throw new Error('History and v3/v4 session identities must match.')
+  }
+  if (history.sourceFormatVersion !== 3
+    && !(history.sourceFormatVersion === undefined && !hasAnalysisCoordinates(history))) {
+    throw new Error('History is not known to use format v3 coordinates.')
+  }
+  if (!isDeepStrictEqual({ ...source.header, version: 4 }, target.header)
+    || source.inheritedEventCount !== target.inheritedEventCount) {
+    throw new Error('Session metadata or inherited coordinates changed; manual history review is required.')
+  }
+  if (target.events.length < source.events.length || source.events.some((event, index) => {
+    const next = target.events[index]
+    return event.seq !== index || next?.seq !== index
+      || event.type !== next.type || event.time !== next.time
+  })) throw new Error('Official migration changes existing event coordinates; automatic history migration is refused.')
+  if (source.events.some((event, index) => !isDeepStrictEqual(comparableEvent(event), comparableEvent(target.events[index])))
+    || target.events.slice(source.events.length).some(event => event.type !== 'subagent/catalog')) {
+    throw new Error('Event evidence changed; automatic history migration is refused.')
+  }
+
+  const maxSeq = source.events.length - 1
+  function check(value, key = '') {
+    if (!Array.isArray(value) && value !== null && /(?:^seq$|Seq$|Seqs$)/u.test(key)
+      && (!Number.isSafeInteger(value) || value < -1 || value > maxSeq)) {
+      throw new Error(`History coordinate ${key} is outside the validated source log.`)
+    }
+    if (history.sourceFormatVersion === undefined && Number.isSafeInteger(value) && value >= 0
+      && /(?:^seq$|Seq$|Seqs$)/u.test(key)) {
+      throw new Error('History watermarks are not known to use format v3 coordinates.')
+    }
+    if (Array.isArray(value)) value.forEach(item => check(item, key))
+    else if (value && typeof value === 'object') Object.entries(value).forEach(([name, item]) => check(item, name))
+  }
+  check(history)
+  return { ...structuredClone(history), sourceFormatVersion: 4 }
+}

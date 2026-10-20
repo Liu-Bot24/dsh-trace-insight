@@ -726,7 +726,7 @@ test('raw event context stays subordinate to the evidence item that explicitly o
         ? { verified: true, events: [
           { seq: 23, type: 'assistant/message', text: 'BEFORE_CONTEXT' },
           compressTraceEvent({ seq: 24, type: 'tool/call', data: { name: 'pwsh', arguments: { command: 'RAW_CONTEXT' } } }),
-          compressTraceEvent({ seq: 25, type: 'tool/result', data: { error: 'TOOL_ERROR', message: { content: [{ type: 'tool-result', content: [{ type: 'text', text: 'AFTER_CONTEXT' }] }] } } }),
+          compressTraceEvent({ seq: 25, type: 'tool/result', data: { error: 'TOOL_ERROR', message: { role: 'tool', toolCallId: 'call', source: { kind: 'tool', callId: 'call' }, isError: true, content: [{ type: 'text', text: 'AFTER_CONTEXT' }] } } }),
           compressTraceEvent({ seq: 26, type: 'step/start', data: {} }),
         ] }
         : { verified: true, events: [{ seq: 14, text: 'RAW_CONTEXT' }] }
@@ -765,6 +765,7 @@ test('raw event context stays subordinate to the evidence item that explicitly o
   assert.match(treeText(contextEvents[0]), /BEFORE_CONTEXT/)
   assert.match(treeText(contextEvents[1]), /工具：pwsh/)
   assert.match(treeText(contextEvents[2]), /结果：text: AFTER_CONTEXT/)
+  assert.match(treeText(contextEvents[2]), /状态：失败/)
   assert.match(treeText(contextEvents[2]), /错误：TOOL_ERROR/)
   assert.match(treeText(contextEvents[3]), /（空事件正文）/)
 })

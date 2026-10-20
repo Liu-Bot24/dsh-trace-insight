@@ -216,13 +216,15 @@ export function compressTraceEvent(event) {
     }
   }
   if (event.type === 'tool/result') {
-    const result = data.message?.content?.find?.(block => block?.type === 'tool-result')
+    const result = data.message?.role === 'tool' ? data.message
+      : data.message?.content?.find?.(block => block?.type === 'tool-result')
     return {
       ...base,
       turn: data.turn,
       step: data.step,
       callId: compact(data.message?.source?.callId ?? result?.toolCallId, 160),
       error: data.error ? compact(data.error, 500) : null,
+      isError: result?.isError === true || Boolean(data.error),
       result: blockText(result?.content, 1_600),
     }
   }

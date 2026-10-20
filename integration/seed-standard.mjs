@@ -45,16 +45,22 @@ for (const [index, id] of sessionIds.entries()) {
     { type: 'turn/start', data: { turn: 1 } },
     { type: 'step/start', data: { turn: 1, step: 1 } },
     { type: 'user/message', surfaceOp: 'append', data: { role: 'user', id: `${id}-user`, source: { kind: 'user' }, content: [{ type: 'text', text }] } },
+    { type: 'assistant/message', surfaceOp: 'append', data: { turn: 1, step: 1, message: {
+      role: 'assistant', id: `${id}-call-message`, source: { kind: 'model', provider: 'trace-insight-fixture', model: 'fixture-small' },
+      content: [{ type: 'tool-call', id: `${id}-call`, name: 'read_file', arguments: '{"path":"missing-demo.txt"}' }],
+    } } },
     { type: 'tool/call', data: { turn: 1, step: 1, callId: `${id}-call`, name: 'read_file', arguments: '{"path":"missing-demo.txt"}' } },
     { type: 'tool/result', surfaceOp: 'append', data: { turn: 1, step: 1, message: {
       role: 'user', id: `${id}-result`, source: { kind: 'tool', callId: `${id}-call` },
       content: [{ type: 'tool-result', toolCallId: `${id}-call`, isError: true, content: [{ type: 'text', text: 'ENOENT: missing-demo.txt does not exist' }] }],
     } } },
-    { type: 'assistant/message', surfaceOp: 'append', data: { turn: 1, step: 1, message: {
+    { type: 'step/end', data: { turn: 1, step: 1 } },
+    { type: 'step/start', data: { turn: 1, step: 2 } },
+    { type: 'assistant/message', surfaceOp: 'append', data: { turn: 1, step: 2, message: {
       role: 'assistant', id: `${id}-assistant`, source: { kind: 'model', provider: 'trace-insight-fixture', model: 'fixture-small' },
       content: [{ type: 'text', text: '文件不存在，保留失败结果并等待正确路径。' }],
     } } },
-    { type: 'step/end', data: { turn: 1, step: 1 } },
+    { type: 'step/end', data: { turn: 1, step: 2 } },
     { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } },
   ].map((event, seq) => ({ ...event, seq, time: now + seq + index * 100 }))
   const path = join(dshHome, 'sessions', projectKey(workspace), id, 'session.jsonl.zstd')

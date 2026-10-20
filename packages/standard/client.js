@@ -1315,7 +1315,7 @@ window.__ModuleLoader__.load({
         : typeof value === 'string' ? value : JSON.stringify(value)
       const primary = text(event.text || event.summary || event.content)
       const fields = event.type === 'tool/call' ? [['工具', event.tool], ['参数', event.arguments]]
-        : event.type === 'tool/result' ? [['结果', event.result], ['错误', event.error]]
+        : event.type === 'tool/result' ? [['状态', typeof event.isError === 'boolean' ? (event.isError ? '失败' : '成功') : null], ['结果', event.result], ['错误', event.error]]
         : [['原因', event.reason], ['上下文', event.context], ['数据', event.data]]
       return [primary, ...fields.filter(([, value]) => value !== null && value !== undefined && value !== '')
         .map(([label, value]) => `${label}：${text(value)}`)].filter(Boolean).join('\n').slice(0, 6000)
@@ -4152,9 +4152,16 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function selectedDockSession(state) {
+      // DSH 0.2 publishes main-view retention instead of a global `current` id.
+      const current = state.current ?? Object.values(state.byId ?? {})
+        .find(session => (session.retainedBy?.mainView ?? 0) > 0)?.id
+      return current !== undefined && state.byId?.[current]?.blank === false ? current : undefined
+    }
+
     function DockFrame({ dock, useSessions, renderSlot }) {
       const state = useDockSnapshot(dock)
-      const sessionId = useSessions(s => s.current !== undefined && s.byId[s.current]?.blank === false ? s.current : undefined)
+      const sessionId = useSessions(selectedDockSession)
       const [host, setHost] = useState(null)
       const [visited, setVisited] = useState(false)
       React.useLayoutEffect(() => {

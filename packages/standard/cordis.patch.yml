@@ -1,7 +1,7 @@
+# DSH 0.2 connection RPC registration reads webServer from its provider context.
+# Preserve the upstream webStartup dependency used by its trustedHosts config.
 - id: connection
-  inject:
-    - webRuntime
-    - webServer
+  inject: [webStartup, webServer]
 - insert:
     - id: trace-insight
       name: dsh-plugin-trace-insight

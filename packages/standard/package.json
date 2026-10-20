@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-trace-insight",
-  "version": "1.6.4",
+  "version": "1.6.5-rc.0",
   "description": "Read-only trajectory analysis in a lightweight, patch-free DeepSeek Harness sidebar.",
   "type": "module",
   "main": "./index.js",
@@ -30,7 +30,8 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-trajectory"
       ],
@@ -40,7 +41,7 @@
   },
   "engines": {
     "node": ">=22.19.0",
-    "dsh": "0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3"
+    "dsh": "0.2.1-rc.2"
   },
   "keywords": [
     "deepseek-harness",
@@ -50,7 +51,7 @@
   ],
   "license": "MIT",
   "dshCompatibility": {
-    "version": "0.1.0-rc.7 || 0.1.0-rc.8 || 0.1.1-rc.1 || 0.1.1-rc.2 || 0.1.2-rc.1 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3",
+    "version": "0.2.1-rc.2",
     "surface": "web"
   }
 }

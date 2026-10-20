@@ -10,7 +10,17 @@ const context = {
   h: render,
   React: { useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() } },
 }
-const { bindDockDrawerDismissals, DockToggle } = vm.runInNewContext(`${source}\n;({bindDockDrawerDismissals,DockToggle})`, context)
+const { bindDockDrawerDismissals, DockToggle, selectedDockSession } = vm.runInNewContext(`${source}\n;({bindDockDrawerDismissals,DockToggle,selectedDockSession})`, context)
+
+test('dock follows DSH 0.2 main-view retention, excluding background and blank sessions', () => {
+  const background = { id: 'background', blank: false, retainedBy: { plugin: 1 } }
+  const active = { id: 'active', blank: false, retainedBy: { mainView: 1 } }
+  assert.equal(selectedDockSession({ byId: { background, active } }), 'active')
+  assert.equal(selectedDockSession({ byId: { background } }), undefined)
+  assert.equal(selectedDockSession({ byId: { active: { ...active, blank: true } } }), undefined)
+  assert.equal(selectedDockSession({ byId: { background: { ...background, retainedBy: {} }, active: { ...active, retainedBy: {} } } }), undefined)
+  assert.equal(selectedDockSession({ current: 'active', byId: { active: { id: 'active', blank: false } } }), 'active')
+})
 
 test('sidebar has no extra title row or close button and retains its original header toggle', () => {
   assert.doesNotMatch(source, /tiDockToolbar|tiDockClose|Trace Insight · 解读|关闭解读侧栏/)

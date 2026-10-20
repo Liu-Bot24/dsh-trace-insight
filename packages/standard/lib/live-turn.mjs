@@ -41,7 +41,9 @@ export function classifyTraceEvent(event) {
     return { noise: false, meaningful: true, progress: false, failure: null }
   }
   if (type === 'tool/result') {
-    const error = Boolean(event?.data?.error)
+    const message = event?.data?.message
+    const result = message?.role === 'tool' ? message : message?.content?.find?.(block => block?.type === 'tool-result')
+    const error = Boolean(event?.data?.error) || result?.isError === true
     return { noise: false, meaningful: true, progress: !error, failure: error }
   }
   // request/header, request/context, assistant/end and anything unknown are
@@ -52,7 +54,7 @@ export function classifyTraceEvent(event) {
 function resultCallId(event) {
   const data = event?.data && typeof event.data === 'object' ? event.data : {}
   const result = data.message?.content?.find?.(block => block?.type === 'tool-result')
-  return data.message?.source?.callId ?? result?.toolCallId ?? data.callId ?? null
+  return data.message?.source?.callId ?? data.message?.toolCallId ?? result?.toolCallId ?? data.callId ?? null
 }
 
 function callToolName(event) {

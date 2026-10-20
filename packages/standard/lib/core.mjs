@@ -946,7 +946,9 @@ export function projectRawSession(payload = {}) {
         subCalls: [],
       })
     } else if (event.type === 'tool/result') {
-      const resultBlock = data.message?.content?.[0]
+      // DSH session format v4 promotes the old tool-result wrapper to a
+      // first-class tool message. Keep the projection readable for old exports.
+      const resultBlock = data.message?.role === 'tool' ? data.message : data.message?.content?.find?.(block => block?.type === 'tool-result')
       const callId = safeString(data.message?.source?.callId ?? resultBlock?.toolCallId)
       const call = calls.get(callId)
       settledCalls.add(callId)

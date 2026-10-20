@@ -50,9 +50,16 @@ function bindDockDrawerDismissals(doc, close) {
   }
 }
 
+function selectedDockSession(state) {
+  // DSH 0.2 publishes main-view retention instead of a global `current` id.
+  const current = state.current ?? Object.values(state.byId ?? {})
+    .find(session => (session.retainedBy?.mainView ?? 0) > 0)?.id
+  return current !== undefined && state.byId?.[current]?.blank === false ? current : undefined
+}
+
 function DockFrame({ dock, useSessions, renderSlot }) {
   const state = useDockSnapshot(dock)
-  const sessionId = useSessions(s => s.current !== undefined && s.byId[s.current]?.blank === false ? s.current : undefined)
+  const sessionId = useSessions(selectedDockSession)
   const [host, setHost] = useState(null)
   const [visited, setVisited] = useState(false)
   React.useLayoutEffect(() => {
