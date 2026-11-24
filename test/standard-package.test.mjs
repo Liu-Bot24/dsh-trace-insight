@@ -35,12 +35,13 @@ function loadClient() {
 
 test('standard metadata is a prebuilt standard DSH plugin with no shell lifecycle or external workspace dependency', () => {
   assert.equal(manifest.name, 'dsh-plugin-trace-insight')
-  assert.equal(manifest.version, '1.6.5')
+  assert.equal(manifest.version, '1.6.6')
   assert.equal(manifest.repository.directory, 'packages/standard')
   assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
   assert.equal(manifest.engines.dsh, manifest.dshCompatibility.version)
   const supportedVersions = manifest.engines.dsh.split(' || ')
   assert.equal(supportedVersions.includes('0.2.1-rc.2'), true)
+  assert.equal(supportedVersions.includes('0.2.2-rc.5'), true)
   assert.equal(supportedVersions.includes('0.1.7-rc.2'), false)
   assert.equal(manifest.dsh.manifestVersion, 1)
   assert.equal(manifest.scripts, undefined)

@@ -21,14 +21,14 @@ DSH session format upgrades can change event coordinates. If saved analyses and 
 
 ## Install
 
-Requires Node.js 22.19.0 or newer. This version targets DSH Web 0.2.1-rc.2, not DSH 0.1. When historical event coordinates change, the plugin refuses to reuse old analysis references. Installing the plugin does not migrate history automatically.
+Requires Node.js 22.19.0 or newer. This version targets DSH Web 0.2.1-rc.2 / 0.2.2-rc.5, not DSH 0.1. When historical event coordinates change, the plugin refuses to reuse old analysis references. Installing the plugin does not migrate history automatically.
 
 DSH's command-line plugin manager also requires `pnpm`. If it is not installed, run `npm install -g pnpm` first.
 
-Download the patch-free sidebar 1.6.5 package from [GitHub Release](https://github.com/Liu-Bot24/dsh-trace-insight/releases/tag/standard-v1.6.5), then run:
+Save the patch-free sidebar 1.6.6 package in a permanent directory, then run:
 
 ```shell
-dsh plugin --profile web add ./dsh-plugin-trace-insight-1.6.5.tgz
+dsh plugin --profile web add ./dsh-plugin-trace-insight-1.6.6.tgz
 ```
 
 You can also install a local `.tgz` using its absolute path. Keep that file in a permanent directory, such as `<DSH_HOME>/trace-insight/packages`, because DSH retains the reference. `DSH_HOME` defaults to `.dsh` in your user directory.

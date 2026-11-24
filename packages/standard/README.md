@@ -21,14 +21,14 @@ DSH 的会话格式升级可能改变事件编号。已有分析记录与当前�
 
 ## 安装
 
-需要 Node.js 22.19.0 或更高版本。本版本面向 DSH Web 0.2.1-rc.2，不适用于 DSH 0.1。历史会话的事件坐标变化时，插件会拒绝沿用旧分析引用；安装插件不会自动迁移历史。
+需要 Node.js 22.19.0 或更高版本。本版本面向 DSH Web 0.2.1-rc.2 / 0.2.2-rc.5，不适用于 DSH 0.1。历史会话的事件坐标变化时，插件会拒绝沿用旧分析引用；安装插件不会自动迁移历史。
 
 命令行管理 DSH 插件需要 `pnpm`；未安装时先运行 `npm install -g pnpm`。
 
-从 [GitHub Release](https://github.com/Liu-Bot24/dsh-trace-insight/releases/tag/standard-v1.6.5) 下载无补丁侧栏 1.6.5 安装包，然后执行：
+将无补丁侧栏 1.6.6 安装包保存在固定目录，然后执行：
 
 ```shell
-dsh plugin --profile web add ./dsh-plugin-trace-insight-1.6.5.tgz
+dsh plugin --profile web add ./dsh-plugin-trace-insight-1.6.6.tgz
 ```
 
 也可以使用本地 `.tgz` 包的完整路径安装。此时应将包放在固定目录，例如 `<DSH_HOME>/trace-insight/packages`，安装后保留该文件；`DSH_HOME` 默认为用户目录下的 `.dsh`。
